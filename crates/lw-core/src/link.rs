@@ -1,0 +1,40 @@
+use regex::Regex;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+static WIKI_LINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
+
+pub fn extract_wiki_links(body: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut links = Vec::new();
+    for cap in WIKI_LINK_RE.captures_iter(body) {
+        let target = cap[1].trim().to_string();
+        if seen.insert(target.clone()) {
+            links.push(target);
+        }
+    }
+    links
+}
+
+pub fn resolve_link(target: &str, wiki_dir: &Path) -> Option<PathBuf> {
+    let filename = format!("{}.md", target);
+    let entries = std::fs::read_dir(wiki_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let candidate = path.join(&filename);
+            if candidate.exists() {
+                let cat = path.file_name()?;
+                return Some(PathBuf::from(cat).join(&filename));
+            }
+        }
+    }
+    None
+}
+
+pub fn find_broken_links(body: &str, wiki_dir: &Path) -> Vec<String> {
+    extract_wiki_links(body)
+        .into_iter()
+        .filter(|target| resolve_link(target, wiki_dir).is_none())
+        .collect()
+}
