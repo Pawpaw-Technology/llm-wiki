@@ -4,8 +4,11 @@ use std::path::Path;
 use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
-use tantivy::schema::{Field, IndexRecordOption, STORED, STRING, Schema, TEXT, Value};
+use tantivy::schema::{
+    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
+};
 use tantivy::snippet::SnippetGenerator;
+use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 // ---------------------------------------------------------------------------
@@ -70,16 +73,30 @@ pub struct TantivySearcher {
 impl TantivySearcher {
     #[tracing::instrument]
     pub fn new(index_dir: &Path) -> Result<Self> {
+        // Build text options with jieba tokenizer for CJK support.
+        let text_indexing = TextFieldIndexing::default()
+            .set_tokenizer("jieba")
+            .set_index_option(IndexRecordOption::WithFreqsAndPositions);
+        let text_options = TextOptions::default()
+            .set_indexing_options(text_indexing)
+            .set_stored();
+
         let mut schema_builder = Schema::builder();
         let f_path = schema_builder.add_text_field("path", STRING | STORED);
-        let f_title = schema_builder.add_text_field("title", TEXT | STORED);
-        let f_body = schema_builder.add_text_field("body", TEXT | STORED);
+        let f_title = schema_builder.add_text_field("title", text_options.clone());
+        let f_body = schema_builder.add_text_field("body", text_options);
         let f_tags = schema_builder.add_text_field("tags", STRING | STORED);
         let f_category = schema_builder.add_text_field("category", STRING | STORED);
         let schema = schema_builder.build();
 
         let index =
             Index::open_or_create(tantivy::directory::MmapDirectory::open(index_dir)?, schema)?;
+
+        // Register jieba tokenizer with lowercase filter for CJK + English support.
+        let jieba_analyzer = TextAnalyzer::builder(tantivy_jieba::JiebaTokenizer::default())
+            .filter(LowerCaser)
+            .build();
+        index.tokenizers().register("jieba", jieba_analyzer);
 
         let reader = index
             .reader_builder()

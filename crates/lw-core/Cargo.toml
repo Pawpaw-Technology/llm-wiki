@@ -11,6 +11,7 @@ toml = "1.1"
 serde_yml = "0.0.12"
 gray_matter = "0.3"
 tantivy = "0.26"
+tantivy-jieba = "0.19"
 regex = "1"
 tracing = { workspace = true }
 
