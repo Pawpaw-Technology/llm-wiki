@@ -2,7 +2,7 @@ use crate::output::Format;
 use lw_core::fs::{load_schema, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
-use lw_core::page::{slugify, Page};
+use lw_core::page::{Page, slugify};
 use serde::Serialize;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -19,7 +19,7 @@ struct IngestOutput {
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     root: &Path,
-    source: Option<&Path>,
+    source: Option<&str>,
     stdin_mode: bool,
     title: &Option<String>,
     category: &Option<String>,
@@ -31,30 +31,44 @@ pub fn run(
 ) -> anyhow::Result<()> {
     let schema = load_schema(root)?;
 
-    // Handle stdin mode: write to temp file first
-    let temp_file;
+    // Track URL origin for frontmatter sources
+    let mut url_origin: Option<String> = None;
+
+    // Resolve source: URL download, stdin, or local file
+    let _url_temp;
+    let _stdin_temp;
     let source_path = if stdin_mode {
         let mut content = String::new();
         io::stdin().lock().read_to_string(&mut content)?;
-        temp_file = tempfile::NamedTempFile::new()?;
-        std::fs::write(temp_file.path(), &content)?;
-        temp_file.path()
+        _stdin_temp = tempfile::NamedTempFile::new()?;
+        std::fs::write(_stdin_temp.path(), &content)?;
+        _stdin_temp.path()
     } else {
-        source.ok_or_else(|| {
+        let source_str = source.ok_or_else(|| {
             anyhow::anyhow!(
-                "No source file specified.\n  \
-                 Usage: lw ingest <file> [--category X] [--yes]\n  \
+                "No source specified.\n  \
+                 Usage: lw ingest <file|url> [--category X] [--yes]\n  \
                  Or:    cat file | lw ingest --stdin --title \"Title\" --yes"
             )
-        })?
-    };
+        })?;
 
-    if !source_path.exists() {
-        anyhow::bail!(
-            "Source file not found: {}\n  Usage: lw ingest <path-to-file> [--raw-type papers]",
-            source_path.display()
-        );
-    }
+        if is_url(source_str) {
+            // Download URL to temp file
+            _url_temp = download_url(source_str)?;
+            url_origin = Some(source_str.to_string());
+            _url_temp.path()
+        } else {
+            let p = Path::new(source_str);
+            if !p.exists() {
+                anyhow::bail!(
+                    "Source file not found: {}\n  Usage: lw ingest <file|url> [--raw-type papers]",
+                    p.display()
+                );
+            }
+            // Leak-free: path lives as long as source_str (which lives for the call)
+            p
+        }
+    };
 
     // Build page from LLM draft or minimal
     let cat = category
@@ -73,10 +87,14 @@ pub fn run(
     if dry_run {
         // Dry run: compute what would be created without writing anything
         let auto_title = title.clone().unwrap_or_else(|| {
-            source_path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Untitled".to_string())
+            if let Some(ref url) = url_origin {
+                filename_from_url(url)
+            } else {
+                source_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Untitled".to_string())
+            }
         });
         let slug = slugify(&auto_title);
         let decay = schema.decay_for_category(&cat).to_string();
@@ -101,6 +119,9 @@ pub fn run(
                 println!("category: {}", cat);
                 println!("decay: {}", decay);
                 println!("tags: [{}]", page_tags.join(", "));
+                if let Some(ref url) = url_origin {
+                    println!("source_url: {}", url);
+                }
             }
         }
         return Ok(());
@@ -116,25 +137,39 @@ pub fn run(
         draft
     } else {
         let auto_title = title.clone().unwrap_or_else(|| {
-            source_path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Untitled".to_string())
+            if let Some(ref url) = url_origin {
+                filename_from_url(url)
+            } else {
+                source_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Untitled".to_string())
+            }
         });
+
+        // Build sources list: raw path + original URL if applicable
+        let raw_ref = format!(
+            "raw/{}/{}",
+            raw_subdir,
+            result.raw_path.file_name().unwrap().to_string_lossy()
+        );
+        let mut sources = vec![raw_ref];
+        if let Some(ref url) = url_origin {
+            sources.push(url.clone());
+        }
+
         Page {
             title: auto_title,
             tags: page_tags,
             decay: Some(schema.decay_for_category(&cat).to_string()),
-            sources: vec![format!(
-                "raw/{}/{}",
-                raw_subdir,
-                source_path.file_name().unwrap().to_string_lossy()
-            )],
+            sources,
             author: None,
             generator: None,
             body: format!(
                 "TODO: summarize {}\n",
-                source_path.file_name().unwrap().to_string_lossy()
+                url_origin
+                    .as_deref()
+                    .unwrap_or(&source_path.file_name().unwrap().to_string_lossy())
             ),
         }
     };
@@ -146,6 +181,9 @@ pub fn run(
         eprintln!("  Tags:     [{}]", draft.tags.join(", "));
         eprintln!("  Category: {}", cat);
         eprintln!("  Decay:    {}", draft.decay.as_deref().unwrap_or("normal"));
+        if let Some(ref url) = url_origin {
+            eprintln!("  Source:   {}", url);
+        }
         eprintln!();
         if !confirm("Create wiki page?", true)? {
             eprintln!("Skipped.");
@@ -182,16 +220,51 @@ pub fn run(
 
 /// Detect if a source string looks like a URL (http:// or https://).
 pub fn is_url(source: &str) -> bool {
-    // Stub: always returns false — will be implemented in GREEN step
-    let _ = source;
-    false
+    source.starts_with("http://") || source.starts_with("https://")
 }
 
 /// Derive a filename from a URL for saving to raw/.
+///
+/// Extracts the last path segment, stripping query parameters.
+/// Falls back to "download" if no meaningful segment can be derived.
 pub fn filename_from_url(url: &str) -> String {
-    // Stub: returns empty string — will be implemented in GREEN step
-    let _ = url;
-    String::new()
+    // Strip scheme
+    let without_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+
+    // Strip query params and fragment
+    let without_query = without_scheme.split('?').next().unwrap_or(without_scheme);
+    let without_fragment = without_query.split('#').next().unwrap_or(without_query);
+
+    // Get path portion (after host)
+    let path = if let Some(slash_pos) = without_fragment.find('/') {
+        &without_fragment[slash_pos..]
+    } else {
+        ""
+    };
+
+    // Get last non-empty segment
+    let segment = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .find(|s| !s.is_empty())
+        .unwrap_or("download");
+
+    segment.to_string()
+}
+
+/// Download a URL to a temporary file and return the path.
+fn download_url(url: &str) -> anyhow::Result<tempfile::NamedTempFile> {
+    eprintln!("Downloading {}...", url);
+    let response = ureq::get(url)
+        .call()
+        .map_err(|e| anyhow::anyhow!("Failed to download URL: {}", e))?;
+
+    let mut temp = tempfile::NamedTempFile::with_suffix(format!("_{}", filename_from_url(url)))?;
+    std::io::copy(&mut response.into_body().as_reader(), &mut temp)?;
+    Ok(temp)
 }
 
 fn confirm(prompt: &str, default_yes: bool) -> io::Result<bool> {
