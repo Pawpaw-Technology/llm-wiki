@@ -1,7 +1,7 @@
 //! MCP server for LLM Wiki.
 //! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint tools.
 
-use lw_core::fs::{category_from_path, list_pages, read_page, write_page};
+use lw_core::fs::{category_from_path, list_pages, read_page, validate_wiki_path, write_page};
 use lw_core::git::{self, FreshnessLevel};
 use lw_core::ingest;
 use lw_core::llm::NoopLlm;
@@ -162,7 +162,10 @@ impl WikiMcpServer {
         description = "Read a wiki page by its relative path within wiki/. Returns the full markdown content including YAML frontmatter, title, tags, and body."
     )]
     fn wiki_read(&self, Parameters(args): Parameters<WikiReadArgs>) -> String {
-        let abs_path = self.wiki_root.join("wiki").join(&args.path);
+        let abs_path = match validate_wiki_path(&self.wiki_root, &args.path) {
+            Ok(p) => p,
+            Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+        };
         match read_page(&abs_path) {
             Ok(page) => serde_json::json!({
                 "path": args.path,
@@ -310,7 +313,10 @@ impl WikiMcpServer {
             }
         };
 
-        let abs_path = self.wiki_root.join("wiki").join(&args.path);
+        let abs_path = match validate_wiki_path(&self.wiki_root, &args.path) {
+            Ok(p) => p,
+            Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+        };
 
         if let Err(e) = write_page(&abs_path, &page) {
             return serde_json::json!({"error": format!("Failed to write page: {e}")}).to_string();
