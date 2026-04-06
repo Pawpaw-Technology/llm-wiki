@@ -3,6 +3,7 @@ mod ingest;
 mod init;
 mod output;
 mod query;
+mod read;
 mod serve;
 mod status;
 
@@ -101,6 +102,23 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Read a wiki page by path
+    ///
+    /// # Examples
+    ///
+    ///     lw read architecture/transformer.md
+    ///     lw read architecture/transformer.md --format json
+    #[command(
+        after_help = "Examples:\n  lw read architecture/transformer.md\n  lw read architecture/transformer.md --format json\n  lw query \"attention\" --format brief | head -1 | cut -f1 | xargs lw read"
+    )]
+    Read {
+        /// Wiki-relative path (e.g., architecture/transformer.md)
+        path: String,
+        /// Output format
+        #[arg(short, long, default_value = "human")]
+        format: Format,
+    },
+
     /// Show wiki health status and freshness report
     #[command(after_help = "Examples:\n  lw status\n  lw status --format json")]
     Status {
@@ -187,6 +205,13 @@ fn main() {
             dry_run,
         } => match resolve_root(cli.root) {
             Ok(root) => import::run(&root, &file, &format, &category, limit, dry_run),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Read { path, format } => match resolve_root(cli.root) {
+            Ok(root) => read::run(&root, &path, &format),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
