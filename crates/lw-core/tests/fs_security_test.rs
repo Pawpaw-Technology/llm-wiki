@@ -1,5 +1,5 @@
-use lw_core::fs::validate_wiki_path;
 use lw_core::WikiError;
+use lw_core::fs::validate_wiki_path;
 use std::path::Path;
 
 #[test]

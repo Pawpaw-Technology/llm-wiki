@@ -85,12 +85,45 @@ pub fn category_from_path(rel_path: &Path) -> Option<String> {
 }
 
 /// Validate that a relative path is safe to use within the wiki directory.
-/// Returns the absolute path if valid, or a PathTraversal error if the path
-/// attempts to escape the wiki directory.
+/// Returns the absolute path if valid, or a `PathTraversal` error if the path
+/// attempts to escape the `wiki_root/wiki/` directory.
+///
+/// Rejects:
+/// - Paths containing `..` components
+/// - Absolute paths
+/// - Any path whose canonical form would land outside `wiki_root/wiki/`
 #[tracing::instrument]
 pub fn validate_wiki_path(wiki_root: &Path, relative_path: &str) -> Result<PathBuf> {
-    // Stub: always returns Ok for now (tests should fail)
-    Ok(wiki_root.join("wiki").join(relative_path))
+    let rel = Path::new(relative_path);
+
+    // Reject absolute paths
+    if rel.is_absolute() {
+        return Err(WikiError::PathTraversal(
+            "absolute paths are not allowed".to_string(),
+        ));
+    }
+
+    // Reject any path component that is ".."
+    for component in rel.components() {
+        if let std::path::Component::ParentDir = component {
+            return Err(WikiError::PathTraversal(
+                "path must not contain '..' components".to_string(),
+            ));
+        }
+    }
+
+    let wiki_dir = wiki_root.join("wiki");
+    let resolved = wiki_dir.join(rel);
+
+    // Belt-and-suspenders: verify the resolved path starts with wiki_dir.
+    // This catches edge cases that component checking might miss.
+    if !resolved.starts_with(&wiki_dir) {
+        return Err(WikiError::PathTraversal(
+            "resolved path is outside the wiki directory".to_string(),
+        ));
+    }
+
+    Ok(resolved)
 }
 
 /// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).
