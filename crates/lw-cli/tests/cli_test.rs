@@ -196,6 +196,114 @@ fn query_without_wiki_shows_actionable_error() {
         .stderr(predicate::str::contains("lw init"));
 }
 
+// === stale flag ===
+
+#[test]
+fn query_help_shows_stale_flag() {
+    lw().args(["query", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--stale"));
+}
+
+#[test]
+fn query_json_includes_freshness_field() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/architecture/fresh.md"),
+        "---\ntitle: Fresh Page\ntags: [test]\n---\n\nSome content about freshness.\n",
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "query",
+            "freshness",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(json["total"].as_u64().unwrap() >= 1);
+    // Every result must have a freshness field
+    for result in json["results"].as_array().unwrap() {
+        assert!(
+            result.get("freshness").is_some(),
+            "Missing freshness field in JSON result: {result}"
+        );
+        let f = result["freshness"].as_str().unwrap();
+        assert!(
+            f == "fresh" || f == "suspect" || f == "stale",
+            "Invalid freshness value: {f}"
+        );
+    }
+}
+
+#[test]
+fn query_brief_includes_freshness_column() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/architecture/brief.md"),
+        "---\ntitle: Brief Test\ntags: [test]\n---\n\nBrief content for freshness test.\n",
+    )
+    .unwrap();
+    // Brief format should include freshness as a column
+    lw().args([
+        "query",
+        "brief",
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "--format",
+        "brief",
+    ])
+    .assert()
+    .success()
+    .stdout(
+        predicate::str::contains("fresh")
+            .or(predicate::str::contains("stale"))
+            .or(predicate::str::contains("suspect")),
+    );
+}
+
+#[test]
+fn query_stale_flag_accepted() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/architecture/staleflag.md"),
+        "---\ntitle: Stale Flag Test\ntags: [test]\n---\n\nContent for stale flag test.\n",
+    )
+    .unwrap();
+    // --stale on a newly written file (no git history) should return no stale results
+    // The command should succeed (exit 0 for json format even with no results)
+    let output = lw()
+        .args([
+            "query",
+            "stale",
+            "--stale",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // No git history means pages are treated as fresh, so --stale should filter them out
+    assert_eq!(json["total"], 0);
+    assert_eq!(json["results"].as_array().unwrap().len(), 0);
+}
+
 // === env var ===
 
 #[test]
