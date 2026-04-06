@@ -75,7 +75,8 @@ impl TantivySearcher {
         let f_category = schema_builder.add_text_field("category", STRING | STORED);
         let schema = schema_builder.build();
 
-        let index = Index::create_in_dir(index_dir, schema)?;
+        let index =
+            Index::open_or_create(tantivy::directory::MmapDirectory::open(index_dir)?, schema)?;
 
         let reader = index
             .reader_builder()
