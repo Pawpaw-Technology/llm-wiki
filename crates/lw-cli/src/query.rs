@@ -55,7 +55,7 @@ pub fn run(
 ) -> anyhow::Result<()> {
     // Validate wiki exists (produces actionable error message)
     let schema = load_schema(root)?;
-    let index_dir = root.join(".lw/search");
+    let index_dir = root.join(lw_core::INDEX_DIR);
     std::fs::create_dir_all(&index_dir)?;
     let searcher = TantivySearcher::new(&index_dir)?;
 
