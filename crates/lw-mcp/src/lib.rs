@@ -1,5 +1,5 @@
 //! MCP server for LLM Wiki.
-//! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint tools.
+//! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint, wiki_stats tools.
 
 use lw_core::fs::{category_from_path, list_pages, read_page, validate_wiki_path, write_page};
 use lw_core::git::{self, FreshnessLevel};
@@ -7,6 +7,7 @@ use lw_core::ingest;
 use lw_core::llm::NoopLlm;
 use lw_core::page::Page;
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
+use lw_core::status::gather_status;
 use lw_core::tag::Taxonomy;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -433,6 +434,45 @@ impl WikiMcpServer {
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
+
+    /// Get wiki health statistics: page count, category breakdown, freshness distribution.
+    #[tool(
+        name = "wiki_stats",
+        description = "Get wiki statistics: page count, category breakdown, freshness distribution. Takes no arguments."
+    )]
+    fn wiki_stats(&self) -> String {
+        match gather_status(&self.wiki_root) {
+            Ok(status) => {
+                let uncategorized_count = status
+                    .categories
+                    .iter()
+                    .find(|c| c.name == "_uncategorized")
+                    .map(|c| c.page_count)
+                    .unwrap_or(0);
+
+                serde_json::json!({
+                    "wiki_name": status.wiki_name,
+                    "total_pages": status.total_pages,
+                    "categories": status.categories.iter().map(|c| {
+                        serde_json::json!({
+                            "name": c.name,
+                            "page_count": c.page_count,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "freshness": {
+                        "fresh": status.freshness.fresh,
+                        "suspect": status.freshness.suspect,
+                        "stale": status.freshness.stale,
+                        "unknown": status.freshness.unknown,
+                    },
+                    "uncategorized_count": uncategorized_count,
+                    "index_present": status.index_present,
+                })
+                .to_string()
+            }
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
 }
 
 #[tool_handler]
@@ -447,7 +487,8 @@ impl ServerHandler for WikiMcpServer {
             .with_instructions(
                 "LLM Wiki knowledge base server. Use wiki_query to search, wiki_read to read pages, \
                  wiki_browse to list pages, wiki_tags to list tags, wiki_write to create/update pages, \
-                 wiki_ingest to import source material, and wiki_lint to check freshness."
+                 wiki_ingest to import source material, wiki_lint to check freshness, \
+                 and wiki_stats to get wiki health statistics."
             )
     }
 }
