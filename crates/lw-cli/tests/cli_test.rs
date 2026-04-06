@@ -512,6 +512,98 @@ fn ingest_help_shows_url_example() {
         .stdout(predicate::str::contains("http"));
 }
 
+// === path traversal security (#13 class) ===
+
+#[test]
+fn ingest_category_traversal_rejected() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let source = tmp.path().join("traversal-test.md");
+    std::fs::write(&source, "# Traversal Test\nContent.").unwrap();
+    // --category "../../etc" should be rejected as path traversal
+    lw().args([
+        "ingest",
+        source.to_str().unwrap(),
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "--category",
+        "../../etc",
+        "--yes",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("traversal").or(predicate::str::contains("path")));
+    // Verify nothing was written outside wiki/
+    assert!(
+        !tmp.path().join("../../etc").exists()
+            || !tmp
+                .path()
+                .join("../../etc")
+                .read_dir()
+                .map(|mut d| d.any(|e| {
+                    e.ok()
+                        .map(|e| e.file_name().to_string_lossy().contains("traversal"))
+                        .unwrap_or(false)
+                }))
+                .unwrap_or(false),
+        "path traversal should not write files outside wiki"
+    );
+}
+
+#[test]
+fn import_category_traversal_rejected() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let tweets = tmp.path().join("traversal-tweets.json");
+    std::fs::write(
+        &tweets,
+        r#"[{"id":"1","full_text":"Test tweet content about AI.","screen_name":"user1","name":"User One","created_at":"2025-01-01 00:00:00","url":"https://x.com/1","favorite_count":10,"bookmark_count":5,"views_count":100,"retweet_count":0,"quote_count":0,"reply_count":0}]"#,
+    )
+    .unwrap();
+    // --category "../../etc" should be rejected as path traversal
+    lw().args([
+        "import",
+        tweets.to_str().unwrap(),
+        "--format",
+        "twitter-json",
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "--category",
+        "../../etc",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("traversal").or(predicate::str::contains("path")));
+}
+
+#[test]
+fn ingest_dry_run_category_traversal_rejected() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let source = tmp.path().join("dry-traversal.md");
+    std::fs::write(&source, "# Dry Traversal\nContent.").unwrap();
+    // Even dry-run should reject traversal categories
+    lw().args([
+        "ingest",
+        source.to_str().unwrap(),
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "--category",
+        "../../../tmp",
+        "--yes",
+        "--dry-run",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("traversal").or(predicate::str::contains("path")));
+}
+
 // === env var ===
 
 #[test]
