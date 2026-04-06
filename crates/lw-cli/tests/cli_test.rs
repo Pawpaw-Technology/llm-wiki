@@ -458,6 +458,60 @@ fn import_json_output() {
     assert_eq!(json["pages"].as_array().unwrap().len(), 2);
 }
 
+// === ingest URL source (#22) ===
+
+#[test]
+fn ingest_url_unreachable_gives_error() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    // A URL pointing to a non-existent host should fail with a download error
+    lw().args([
+        "ingest",
+        "https://this-host-does-not-exist-12345.invalid/paper.pdf",
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "--category",
+        "architecture",
+        "--yes",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("download").or(predicate::str::contains("URL")));
+}
+
+#[test]
+fn ingest_url_dry_run_unreachable_gives_error() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    // Even dry-run with a URL should attempt to fetch (to validate the source)
+    // but with an unreachable host, it should fail
+    lw().args([
+        "ingest",
+        "https://this-host-does-not-exist-12345.invalid/paper.pdf",
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "--category",
+        "architecture",
+        "--yes",
+        "--dry-run",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("download").or(predicate::str::contains("URL")));
+}
+
+#[test]
+fn ingest_help_shows_url_example() {
+    lw().args(["ingest", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("http"));
+}
+
 // === env var ===
 
 #[test]

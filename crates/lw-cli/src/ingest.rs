@@ -2,7 +2,7 @@ use crate::output::Format;
 use lw_core::fs::{load_schema, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
-use lw_core::page::{Page, slugify};
+use lw_core::page::{slugify, Page};
 use serde::Serialize;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -180,6 +180,20 @@ pub fn run(
     Ok(())
 }
 
+/// Detect if a source string looks like a URL (http:// or https://).
+pub fn is_url(source: &str) -> bool {
+    // Stub: always returns false — will be implemented in GREEN step
+    let _ = source;
+    false
+}
+
+/// Derive a filename from a URL for saving to raw/.
+pub fn filename_from_url(url: &str) -> String {
+    // Stub: returns empty string — will be implemented in GREEN step
+    let _ = url;
+    String::new()
+}
+
 fn confirm(prompt: &str, default_yes: bool) -> io::Result<bool> {
     let suffix = if default_yes { "[Y/n]" } else { "[y/N]" };
     eprint!("  {} {} ", prompt, suffix);
@@ -192,4 +206,63 @@ fn confirm(prompt: &str, default_yes: bool) -> io::Result<bool> {
     } else {
         trimmed == "y" || trimmed == "yes"
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- URL detection ---
+
+    #[test]
+    fn is_url_detects_https() {
+        assert!(is_url("https://arxiv.org/abs/2405.12345"));
+    }
+
+    #[test]
+    fn is_url_detects_http() {
+        assert!(is_url("http://example.com/paper.pdf"));
+    }
+
+    #[test]
+    fn is_url_rejects_file_path() {
+        assert!(!is_url("/home/user/paper.pdf"));
+        assert!(!is_url("relative/path.md"));
+        assert!(!is_url("paper.pdf"));
+    }
+
+    #[test]
+    fn is_url_rejects_other_schemes() {
+        assert!(!is_url("ftp://example.com/file"));
+        assert!(!is_url("ssh://host/repo"));
+    }
+
+    // --- Filename derivation from URL ---
+
+    #[test]
+    fn filename_from_url_extracts_last_segment() {
+        assert_eq!(
+            filename_from_url("https://example.com/papers/attention.pdf"),
+            "attention.pdf"
+        );
+    }
+
+    #[test]
+    fn filename_from_url_handles_trailing_slash() {
+        let name = filename_from_url("https://arxiv.org/abs/2405.12345/");
+        assert!(!name.is_empty());
+        // Should produce something meaningful, not empty
+    }
+
+    #[test]
+    fn filename_from_url_handles_query_params() {
+        let name = filename_from_url("https://example.com/doc.pdf?token=abc");
+        assert_eq!(name, "doc.pdf");
+    }
+
+    #[test]
+    fn filename_from_url_handles_no_path() {
+        let name = filename_from_url("https://example.com");
+        assert!(!name.is_empty());
+    }
 }
