@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "lw",
+      "args": ["serve"],
+      "env": {
+        "LW_WIKI_ROOT": "/path/to/your/wiki"
+      }
+    }
+  }
+}
