@@ -1,7 +1,8 @@
 //! MCP server for LLM Wiki.
-//! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint tools.
+//! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint, wiki_stats tools.
 
 use lw_core::fs::{category_from_path, list_pages, read_page, validate_wiki_path, write_page};
+use lw_core::status::gather_status;
 use lw_core::git::{self, FreshnessLevel};
 use lw_core::ingest;
 use lw_core::llm::NoopLlm;
@@ -432,6 +433,15 @@ impl WikiMcpServer {
             }
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
+    }
+
+    /// Get wiki health statistics: page count, category breakdown, freshness distribution.
+    #[tool(
+        name = "wiki_stats",
+        description = "Get wiki statistics: page count, category breakdown, freshness distribution. Takes no arguments."
+    )]
+    fn wiki_stats(&self) -> String {
+        todo!("wiki_stats not yet implemented")
     }
 }
 
