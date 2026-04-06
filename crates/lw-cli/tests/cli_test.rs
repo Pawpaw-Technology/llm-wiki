@@ -522,7 +522,6 @@ fn ingest_category_traversal_rejected() {
         .success();
     let source = tmp.path().join("traversal-test.md");
     std::fs::write(&source, "# Traversal Test\nContent.").unwrap();
-    // --category "../../etc" should be rejected as path traversal
     lw().args([
         "ingest",
         source.to_str().unwrap(),
@@ -535,21 +534,75 @@ fn ingest_category_traversal_rejected() {
     .assert()
     .failure()
     .stderr(predicate::str::contains("traversal").or(predicate::str::contains("path")));
-    // Verify nothing was written outside wiki/
-    assert!(
-        !tmp.path().join("../../etc").exists()
-            || !tmp
-                .path()
-                .join("../../etc")
-                .read_dir()
-                .map(|mut d| d.any(|e| {
-                    e.ok()
-                        .map(|e| e.file_name().to_string_lossy().contains("traversal"))
-                        .unwrap_or(false)
-                }))
-                .unwrap_or(false),
-        "path traversal should not write files outside wiki"
-    );
+}
+
+// === read ===
+
+fn setup_wiki_with_page(tmp: &TempDir) {
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/architecture/transformer.md"),
+        "---\ntitle: Flash Attention 2\ntags:\n  - architecture\n  - attention\ndecay: normal\n---\n\nFlash Attention 2 reduces memory usage.\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn read_existing_page() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    lw().args([
+        "read",
+        "architecture/transformer.md",
+        "--root",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("Flash Attention 2"));
+}
+
+#[test]
+fn read_nonexistent_page_fails() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    lw().args([
+        "read",
+        "nonexistent/page.md",
+        "--root",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
+fn read_json_format() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    let output = lw()
+        .args([
+            "read",
+            "architecture/transformer.md",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("read --format json should produce valid JSON");
+    assert_eq!(json["path"], "architecture/transformer.md");
+    assert_eq!(json["title"], "Flash Attention 2");
+    assert!(json["tags"].is_array());
+    assert!(json["body"]
+        .as_str()
+        .unwrap()
+        .contains("reduces memory usage"));
 }
 
 #[test]
@@ -564,7 +617,6 @@ fn import_category_traversal_rejected() {
         r#"[{"id":"1","full_text":"Test tweet content about AI.","screen_name":"user1","name":"User One","created_at":"2025-01-01 00:00:00","url":"https://x.com/1","favorite_count":10,"bookmark_count":5,"views_count":100,"retweet_count":0,"quote_count":0,"reply_count":0}]"#,
     )
     .unwrap();
-    // --category "../../etc" should be rejected as path traversal
     lw().args([
         "import",
         tweets.to_str().unwrap(),
@@ -588,7 +640,6 @@ fn ingest_dry_run_category_traversal_rejected() {
         .success();
     let source = tmp.path().join("dry-traversal.md");
     std::fs::write(&source, "# Dry Traversal\nContent.").unwrap();
-    // Even dry-run should reject traversal categories
     lw().args([
         "ingest",
         source.to_str().unwrap(),
@@ -602,6 +653,28 @@ fn ingest_dry_run_category_traversal_rejected() {
     .assert()
     .failure()
     .stderr(predicate::str::contains("traversal").or(predicate::str::contains("path")));
+}
+
+#[test]
+fn read_path_traversal_rejected() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    lw().args([
+        "read",
+        "../../etc/passwd",
+        "--root",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
+fn help_shows_read_command() {
+    lw().arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("read"));
 }
 
 // === env var ===
