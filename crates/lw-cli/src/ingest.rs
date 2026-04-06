@@ -34,6 +34,75 @@ pub fn run(
     // Track URL origin for frontmatter sources
     let mut url_origin: Option<String> = None;
 
+    // Determine if source is a URL (before resolving) so dry-run can skip download
+    let source_str = if !stdin_mode {
+        source.map(|s| s.to_string())
+    } else {
+        None
+    };
+    let source_is_url = source_str.as_deref().is_some_and(is_url);
+
+    // Build page from LLM draft or minimal
+    let cat = category
+        .clone()
+        .unwrap_or_else(|| "_uncategorized".to_string());
+    let page_tags: Vec<String> = tags
+        .as_ref()
+        .map(|t| {
+            t.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Validate category early to reject path traversal before any I/O
+    validate_wiki_path(root, &format!("{}/probe.md", cat))?;
+
+    if dry_run {
+        // Dry run: skip download, derive metadata from source alone.
+        // For URLs, use filename_from_url (no file to read H1 from).
+        // For files, derive_title extracts H1 from content.
+        let auto_title = if source_is_url {
+            title
+                .clone()
+                .unwrap_or_else(|| filename_from_url(source_str.as_deref().unwrap()))
+        } else if let Some(ref s) = source_str {
+            derive_title(title.as_deref(), Path::new(s), None)
+        } else {
+            title.clone().unwrap_or_else(|| "Untitled".to_string())
+        };
+        let slug = slugify(&auto_title);
+        let decay = schema.decay_for_category(&cat).to_string();
+        let rel_path = format!("wiki/{}/{}.md", cat, slug);
+
+        let output = IngestOutput {
+            path: rel_path.clone(),
+            title: auto_title.clone(),
+            category: cat.clone(),
+            decay: decay.clone(),
+            dry_run: true,
+        };
+
+        match output_format {
+            Format::Json => {
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            }
+            Format::Human | Format::Brief => {
+                println!("dry-run: true");
+                println!("path: {}", rel_path);
+                println!("title: {}", auto_title);
+                println!("category: {}", cat);
+                println!("decay: {}", decay);
+                println!("tags: [{}]", page_tags.join(", "));
+                if source_is_url {
+                    println!("source_url: {}", source_str.as_deref().unwrap());
+                }
+            }
+        }
+        return Ok(());
+    }
+
     // Resolve source: URL download, stdin, or local file
     // Keep temp resources alive so paths remain valid for the duration of this function.
     let _url_temp_dir;
@@ -46,7 +115,7 @@ pub fn run(
         std::fs::write(_stdin_temp.path(), &content)?;
         _stdin_temp.path()
     } else {
-        let source_str = source.ok_or_else(|| {
+        let source_str = source_str.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
                 "No source specified.\n  \
                  Usage: lw ingest <file|url> [--category X] [--yes]\n  \
@@ -72,57 +141,6 @@ pub fn run(
             p
         }
     };
-
-    // Build page from LLM draft or minimal
-    let cat = category
-        .clone()
-        .unwrap_or_else(|| "_uncategorized".to_string());
-    let page_tags: Vec<String> = tags
-        .as_ref()
-        .map(|t| {
-            t.split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Validate category early to reject path traversal before any I/O
-    validate_wiki_path(root, &format!("{}/probe.md", cat))?;
-
-    if dry_run {
-        // Dry run: compute what would be created without writing anything
-        let auto_title = derive_title(title.as_deref(), source_path, url_origin.as_deref());
-        let slug = slugify(&auto_title);
-        let decay = schema.decay_for_category(&cat).to_string();
-        let rel_path = format!("wiki/{}/{}.md", cat, slug);
-
-        let output = IngestOutput {
-            path: rel_path.clone(),
-            title: auto_title.clone(),
-            category: cat.clone(),
-            decay: decay.clone(),
-            dry_run: true,
-        };
-
-        match output_format {
-            Format::Json => {
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            }
-            Format::Human | Format::Brief => {
-                println!("dry-run: true");
-                println!("path: {}", rel_path);
-                println!("title: {}", auto_title);
-                println!("category: {}", cat);
-                println!("decay: {}", decay);
-                println!("tags: [{}]", page_tags.join(", "));
-                if let Some(ref url) = url_origin {
-                    println!("source_url: {}", url);
-                }
-            }
-        }
-        return Ok(());
-    }
 
     // Phase 1: NoopLlm
     let llm = NoopLlm;
