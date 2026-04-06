@@ -1,9 +1,20 @@
+use crate::output::Format;
 use lw_core::fs::{load_schema, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
 use lw_core::page::{Page, slugify};
+use serde::Serialize;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
+
+#[derive(Serialize)]
+struct IngestOutput {
+    path: String,
+    title: String,
+    category: String,
+    decay: String,
+    dry_run: bool,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -15,6 +26,8 @@ pub fn run(
     tags: &Option<String>,
     raw_subdir: &str,
     yes: bool,
+    dry_run: bool,
+    output_format: &Format,
 ) -> anyhow::Result<()> {
     let schema = load_schema(root)?;
 
@@ -43,12 +56,6 @@ pub fn run(
         );
     }
 
-    // Phase 1: NoopLlm
-    let llm = NoopLlm;
-    let rt = tokio::runtime::Runtime::new()?;
-    let result = rt.block_on(ingest_source(root, source_path, raw_subdir, &llm))?;
-    eprintln!("Saved to {}", result.raw_path.display());
-
     // Build page from LLM draft or minimal
     let cat = category
         .clone()
@@ -62,6 +69,48 @@ pub fn run(
                 .collect()
         })
         .unwrap_or_default();
+
+    if dry_run {
+        // Dry run: compute what would be created without writing anything
+        let auto_title = title.clone().unwrap_or_else(|| {
+            source_path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Untitled".to_string())
+        });
+        let slug = slugify(&auto_title);
+        let decay = schema.decay_for_category(&cat).to_string();
+        let rel_path = format!("wiki/{}/{}.md", cat, slug);
+
+        let output = IngestOutput {
+            path: rel_path.clone(),
+            title: auto_title.clone(),
+            category: cat.clone(),
+            decay: decay.clone(),
+            dry_run: true,
+        };
+
+        match output_format {
+            Format::Json => {
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            }
+            Format::Human | Format::Brief => {
+                println!("dry-run: true");
+                println!("path: {}", rel_path);
+                println!("title: {}", auto_title);
+                println!("category: {}", cat);
+                println!("decay: {}", decay);
+                println!("tags: [{}]", page_tags.join(", "));
+            }
+        }
+        return Ok(());
+    }
+
+    // Phase 1: NoopLlm
+    let llm = NoopLlm;
+    let rt = tokio::runtime::Runtime::new()?;
+    let result = rt.block_on(ingest_source(root, source_path, raw_subdir, &llm))?;
+    eprintln!("Saved to {}", result.raw_path.display());
 
     let draft = if let Some(draft) = result.draft {
         draft
@@ -105,13 +154,28 @@ pub fn run(
     }
 
     let slug = slugify(&draft.title);
-    let page_path = root.join("wiki").join(&cat).join(format!("{slug}.md"));
+    let rel_path = format!("wiki/{}/{}.md", cat, slug);
+    let page_path = root.join(&rel_path);
     write_page(&page_path, &draft)?;
 
-    // Machine-useful success output
-    println!("path: wiki/{}/{}.md", cat, slug);
-    println!("title: {}", draft.title);
-    println!("category: {}", cat);
+    let output = IngestOutput {
+        path: rel_path.clone(),
+        title: draft.title.clone(),
+        category: cat.clone(),
+        decay: draft.decay.clone().unwrap_or_else(|| "normal".to_string()),
+        dry_run: false,
+    };
+
+    match output_format {
+        Format::Json => {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        Format::Human | Format::Brief => {
+            println!("path: {}", rel_path);
+            println!("title: {}", draft.title);
+            println!("category: {}", cat);
+        }
+    }
 
     Ok(())
 }

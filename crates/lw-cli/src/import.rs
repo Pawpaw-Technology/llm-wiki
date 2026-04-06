@@ -1,6 +1,24 @@
+use crate::output::Format;
 use lw_core::fs::{load_schema, write_page};
 use lw_core::import::parse_twitter_json;
+use serde::Serialize;
 use std::path::Path;
+
+#[derive(Serialize)]
+struct ImportOutput {
+    imported: usize,
+    skipped: usize,
+    total: usize,
+    category: String,
+    pages: Vec<ImportedPageInfo>,
+}
+
+#[derive(Serialize)]
+struct ImportedPageInfo {
+    path: String,
+    title: String,
+    source_id: String,
+}
 
 pub fn run(
     root: &Path,
@@ -9,6 +27,7 @@ pub fn run(
     category: &str,
     limit: Option<usize>,
     dry_run: bool,
+    output_format: &Format,
 ) -> anyhow::Result<()> {
     let _schema = load_schema(root)?;
 
@@ -26,23 +45,53 @@ pub fn run(
         _ => anyhow::bail!("Unknown format: {}\n  Supported: twitter-json", format),
     };
 
+    let total = pages.len();
+
     if dry_run {
-        println!("dry_run: true");
-        println!("count: {}", pages.len());
-        println!("category: {}", category);
-        for p in &pages {
-            println!("  {} -> wiki/{}/{}.md", p.source_id, category, p.slug);
+        let page_infos: Vec<ImportedPageInfo> = pages
+            .iter()
+            .map(|p| ImportedPageInfo {
+                path: format!("wiki/{}/{}.md", category, p.slug),
+                title: p.title.clone(),
+                source_id: p.source_id.clone(),
+            })
+            .collect();
+
+        let output = ImportOutput {
+            imported: 0,
+            skipped: total,
+            total,
+            category: category.to_string(),
+            pages: page_infos,
+        };
+
+        match output_format {
+            Format::Json => {
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            }
+            Format::Human | Format::Brief => {
+                println!("dry_run: true");
+                println!("count: {}", total);
+                println!("category: {}", category);
+                for p in &pages {
+                    println!("  {} -> wiki/{}/{}.md", p.source_id, category, p.slug);
+                }
+            }
         }
         return Ok(());
     }
 
     let mut created = 0;
+    let mut page_infos = Vec::new();
     for p in &pages {
-        let page_path = root
-            .join("wiki")
-            .join(category)
-            .join(format!("{}.md", p.slug));
+        let rel_path = format!("wiki/{}/{}.md", category, p.slug);
+        let page_path = root.join(&rel_path);
         write_page(&page_path, &p.page)?;
+        page_infos.push(ImportedPageInfo {
+            path: rel_path,
+            title: p.title.clone(),
+            source_id: p.source_id.clone(),
+        });
         created += 1;
     }
 
@@ -53,10 +102,24 @@ pub fn run(
         std::fs::copy(file, &raw_dest)?;
     }
 
-    // Machine-useful output
-    println!("imported: {}", created);
-    println!("category: {}", category);
-    println!("raw_copy: {}", raw_dest.display());
+    let output = ImportOutput {
+        imported: created,
+        skipped: total - created,
+        total,
+        category: category.to_string(),
+        pages: page_infos,
+    };
+
+    match output_format {
+        Format::Json => {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        Format::Human | Format::Brief => {
+            println!("imported: {}", created);
+            println!("category: {}", category);
+            println!("raw_copy: {}", raw_dest.display());
+        }
+    }
 
     Ok(())
 }

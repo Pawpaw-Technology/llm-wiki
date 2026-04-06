@@ -304,6 +304,160 @@ fn query_stale_flag_accepted() {
     assert_eq!(json["results"].as_array().unwrap().len(), 0);
 }
 
+// === ingest --dry-run (#21) ===
+
+#[test]
+fn ingest_dry_run_no_file_written() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let source = tmp.path().join("dry-run-source.md");
+    std::fs::write(&source, "# Dry Run Test\nContent for dry run.").unwrap();
+    lw().args([
+        "ingest",
+        source.to_str().unwrap(),
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "--category",
+        "architecture",
+        "--yes",
+        "--dry-run",
+    ])
+    .assert()
+    .success();
+    // No wiki page should have been created
+    let wiki_dir = tmp.path().join("wiki/architecture");
+    let pages: Vec<_> = std::fs::read_dir(&wiki_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains("dry-run"))
+        .collect();
+    assert!(
+        pages.is_empty(),
+        "dry-run should not create wiki pages, but found: {:?}",
+        pages
+    );
+}
+
+#[test]
+fn ingest_dry_run_shows_preview() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let source = tmp.path().join("preview-test.md");
+    std::fs::write(&source, "# Preview Test\nPreview content here.").unwrap();
+    let output = lw()
+        .args([
+            "ingest",
+            source.to_str().unwrap(),
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--category",
+            "architecture",
+            "--yes",
+            "--dry-run",
+            "-o",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("dry-run json output should be valid JSON");
+    // Must contain title, category, path, dry_run flag
+    assert_eq!(json["dry_run"], true);
+    assert!(
+        json["title"].as_str().is_some(),
+        "missing title in dry-run output"
+    );
+    assert_eq!(json["category"], "architecture");
+    assert!(
+        json["path"].as_str().is_some(),
+        "missing path in dry-run output"
+    );
+}
+
+// === ingest --output-format json (#20) ===
+
+#[test]
+fn ingest_json_output() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let source = tmp.path().join("json-output-source.md");
+    std::fs::write(&source, "# JSON Output Test\nContent.").unwrap();
+    let output = lw()
+        .args([
+            "ingest",
+            source.to_str().unwrap(),
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--category",
+            "architecture",
+            "--yes",
+            "-o",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("ingest json output should be valid JSON");
+    assert_eq!(json["dry_run"], false);
+    assert!(json["title"].as_str().is_some(), "missing title");
+    assert_eq!(json["category"], "architecture");
+    assert!(
+        json["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("wiki/architecture/"),
+        "path should start with wiki/architecture/"
+    );
+}
+
+// === import --output-format json (#20) ===
+
+#[test]
+fn import_json_output() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let tweets = tmp.path().join("tweets.json");
+    std::fs::write(
+        &tweets,
+        r#"[
+        {"id":"1","full_text":"This is a test tweet about AI agents and capabilities.","screen_name":"user1","name":"User One","created_at":"2025-01-01 00:00:00","url":"https://x.com/1","favorite_count":10,"bookmark_count":5,"views_count":100,"retweet_count":0,"quote_count":0,"reply_count":0},
+        {"id":"2","full_text":"Another test tweet about transformer architecture design.","screen_name":"user2","name":"User Two","created_at":"2025-01-02 00:00:00","url":"https://x.com/2","favorite_count":20,"bookmark_count":10,"views_count":200,"retweet_count":0,"quote_count":0,"reply_count":0}
+    ]"#,
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "import",
+            tweets.to_str().unwrap(),
+            "--format",
+            "twitter-json",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "-o",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("import json output should be valid JSON");
+    assert_eq!(json["imported"], 2);
+    assert_eq!(json["total"], 2);
+    assert!(json["skipped"].is_number(), "missing skipped count");
+    assert!(json["pages"].is_array(), "missing pages array");
+    assert_eq!(json["pages"].as_array().unwrap().len(), 2);
+}
+
 // === env var ===
 
 #[test]
