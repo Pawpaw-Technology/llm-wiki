@@ -71,5 +71,8 @@ Body content here.
     assert_eq!(page.title, reparsed.title);
     assert_eq!(page.tags, reparsed.tags);
     assert_eq!(page.decay, reparsed.decay);
+    assert_eq!(page.sources, reparsed.sources);
+    assert_eq!(page.author, reparsed.author);
+    assert_eq!(page.generator, reparsed.generator);
     assert_eq!(page.body.trim(), reparsed.body.trim());
 }
