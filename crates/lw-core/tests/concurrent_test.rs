@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{make_page, TestWiki};
+use common::{TestWiki, make_page};
 use lw_core::fs::{list_pages, read_page};
 use lw_core::link::{find_broken_links, resolve_link};
 use lw_core::search::{SearchQuery, Searcher};
@@ -27,22 +27,37 @@ fn parallel_wikis_full_lifecycle() {
 
                 // Verify page count is exactly 5 (no cross-wiki bleed)
                 let listed = list_pages(&wiki.wiki_dir()).unwrap();
-                assert_eq!(listed.len(), 5, "wiki {i}: expected 5 pages, got {}", listed.len());
+                assert_eq!(
+                    listed.len(),
+                    5,
+                    "wiki {i}: expected 5 pages, got {}",
+                    listed.len()
+                );
 
                 // Read back and verify content belongs to this wiki
-                let p = read_page(&wiki.wiki_dir().join("architecture/transformer-architecture.md")).unwrap();
+                let p = read_page(
+                    &wiki
+                        .wiki_dir()
+                        .join("architecture/transformer-architecture.md"),
+                )
+                .unwrap();
                 assert_eq!(p.title, "Transformer Architecture");
 
                 // Taxonomy is purely in-memory, but verify no cross-contamination
                 let all: Vec<_> = pages.iter().map(|(_, p)| p.clone()).collect();
                 let tax = Taxonomy::from_pages(&all);
-                assert_eq!(tax.tag_count("architecture"), 2, "wiki {i}: tag count wrong");
+                assert_eq!(
+                    tax.tag_count("architecture"),
+                    2,
+                    "wiki {i}: tag count wrong"
+                );
             })
         })
         .collect();
 
     for (i, h) in handles.into_iter().enumerate() {
-        h.join().unwrap_or_else(|e| panic!("wiki thread {i} panicked: {e:?}"));
+        h.join()
+            .unwrap_or_else(|e| panic!("wiki thread {i} panicked: {e:?}"));
     }
 }
 
@@ -99,7 +114,8 @@ fn parallel_search_indexes() {
         .collect();
 
     for (i, h) in handles.into_iter().enumerate() {
-        h.join().unwrap_or_else(|e| panic!("search thread {i} panicked: {e:?}"));
+        h.join()
+            .unwrap_or_else(|e| panic!("search thread {i} panicked: {e:?}"));
     }
 }
 
@@ -172,7 +188,8 @@ fn parallel_link_resolution() {
         .collect();
 
     for (i, h) in handles.into_iter().enumerate() {
-        h.join().unwrap_or_else(|e| panic!("link thread {i} panicked: {e:?}"));
+        h.join()
+            .unwrap_or_else(|e| panic!("link thread {i} panicked: {e:?}"));
     }
 }
 
@@ -262,6 +279,7 @@ fn shared_searcher_across_threads() {
         .collect();
 
     for (i, h) in handles.into_iter().enumerate() {
-        h.join().unwrap_or_else(|e| panic!("query thread {i} panicked: {e:?}"));
+        h.join()
+            .unwrap_or_else(|e| panic!("query thread {i} panicked: {e:?}"));
     }
 }

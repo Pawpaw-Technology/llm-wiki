@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{sample_pages, TestWiki};
+use common::{TestWiki, sample_pages};
 use lw_core::fs::{list_pages, read_page};
 use lw_core::ingest::ingest_source;
 use lw_core::link::{extract_wiki_links, find_broken_links, resolve_link};
@@ -23,8 +23,12 @@ fn step1_init_wiki_and_write_pages() {
     let listed = list_pages(&wiki.wiki_dir()).unwrap();
     assert_eq!(listed.len(), 5, "Expected 5 pages, got: {listed:?}");
 
-    let read_back =
-        read_page(&wiki.wiki_dir().join("architecture/transformer-architecture.md")).unwrap();
+    let read_back = read_page(
+        &wiki
+            .wiki_dir()
+            .join("architecture/transformer-architecture.md"),
+    )
+    .unwrap();
     assert_eq!(read_back.title, "Transformer Architecture");
     assert!(read_back.tags.contains(&"attention".to_string()));
     assert_eq!(read_back.decay.as_deref(), Some("evergreen"));
