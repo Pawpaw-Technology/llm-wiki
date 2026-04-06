@@ -3,3 +3,5 @@
 .worktrees/
 dist/
 *.tar.gz
+.claude/worktrees/
+.claude/staleness-warnings.jsonl
