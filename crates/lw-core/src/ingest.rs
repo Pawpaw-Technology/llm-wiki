@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::llm::LlmBackend;
 use crate::page::Page;
-use crate::Result;
 use std::path::{Path, PathBuf};
 
 pub struct IngestResult {
@@ -16,14 +16,12 @@ pub async fn ingest_source<L: LlmBackend>(
     llm: &L,
 ) -> Result<IngestResult> {
     // Copy source to raw/
-    let filename = source
-        .file_name()
-        .ok_or_else(|| {
-            crate::WikiError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "source has no filename",
-            ))
-        })?;
+    let filename = source.file_name().ok_or_else(|| {
+        crate::WikiError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "source has no filename",
+        ))
+    })?;
     let dest_dir = wiki_root.join("raw").join(raw_subdir);
     std::fs::create_dir_all(&dest_dir)?;
     let raw_path = dest_dir.join(filename);

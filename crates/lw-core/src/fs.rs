@@ -54,10 +54,10 @@ fn walk_md(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         let path = entry.path();
         if path.is_dir() {
             walk_md(base, &path, out)?;
-        } else if path.extension().is_some_and(|ext| ext == "md") {
-            if let Ok(rel) = path.strip_prefix(base) {
-                out.push(rel.to_path_buf());
-            }
+        } else if path.extension().is_some_and(|ext| ext == "md")
+            && let Ok(rel) = path.strip_prefix(base)
+        {
+            out.push(rel.to_path_buf());
         }
     }
     Ok(())
