@@ -1,7 +1,7 @@
 use lw_core::fs::{load_schema, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
-use lw_core::page::Page;
+use lw_core::page::{Page, slugify};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
@@ -128,16 +128,4 @@ fn confirm(prompt: &str, default_yes: bool) -> io::Result<bool> {
     } else {
         trimmed == "y" || trimmed == "yes"
     })
-}
-
-fn slugify(title: &str) -> String {
-    title
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<&str>>()
-        .join("-")
 }

@@ -102,6 +102,7 @@ pub struct WikiLintArgs {
 pub struct WikiMcpServer {
     wiki_root: PathBuf,
     searcher: Arc<TantivySearcher>,
+    default_review_days: u32,
     tool_router: ToolRouter<Self>,
 }
 
@@ -219,7 +220,9 @@ impl WikiMcpServer {
                         let age = git::page_age_days(&abs_path);
                         let decay = page.decay.as_deref().unwrap_or("normal");
                         let level = match age {
-                            Some(days) => git::compute_freshness(decay, days, 90),
+                            Some(days) => {
+                                git::compute_freshness(decay, days, self.default_review_days)
+                            }
                             None => FreshnessLevel::Fresh,
                         };
                         if level == FreshnessLevel::Fresh {
@@ -388,7 +391,7 @@ impl WikiMcpServer {
                     let decay = page.decay.as_deref().unwrap_or("normal");
                     let age_days = git::page_age_days(&abs_path);
                     let level = match age_days {
-                        Some(days) => git::compute_freshness(decay, days, 90),
+                        Some(days) => git::compute_freshness(decay, days, self.default_review_days),
                         None => FreshnessLevel::Fresh, // no git history = treat as fresh
                     };
 
@@ -445,6 +448,9 @@ impl ServerHandler for WikiMcpServer {
 
 impl WikiMcpServer {
     pub fn new(wiki_root: PathBuf) -> anyhow::Result<Self> {
+        let schema = lw_core::fs::load_schema(&wiki_root)?;
+        let default_review_days = schema.wiki.default_review_days;
+
         let index_dir = wiki_root.join(".lw/index");
         std::fs::create_dir_all(&index_dir)?;
 
@@ -461,6 +467,7 @@ impl WikiMcpServer {
         Ok(Self {
             wiki_root,
             searcher,
+            default_review_days,
             tool_router: Self::tool_router(),
         })
     }

@@ -73,12 +73,15 @@ pub fn load_schema(root: &Path) -> Result<WikiSchema> {
     WikiSchema::parse(&content)
 }
 
+/// Extract category from a wiki-relative path (first path component).
+/// e.g. "architecture/transformer.md" → Some("architecture")
+/// e.g. "test.md" → None (no category directory)
 pub fn category_from_path(rel_path: &Path) -> Option<String> {
-    rel_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .and_then(|p| p.file_name())
-        .map(|s| s.to_string_lossy().to_string())
+    let mut components = rel_path.components();
+    let first = components.next()?;
+    // Only return category if there's at least one more component (the filename)
+    components.next()?;
+    Some(first.as_os_str().to_string_lossy().to_string())
 }
 
 /// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).

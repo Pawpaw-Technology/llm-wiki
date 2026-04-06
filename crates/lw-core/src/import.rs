@@ -1,4 +1,4 @@
-use crate::page::Page;
+use crate::page::{Page, slugify};
 use crate::{Result, WikiError};
 use serde::Deserialize;
 
@@ -32,14 +32,14 @@ struct Tweet {
 /// Parse a Twitter JSON export into ImportedPage entries.
 pub fn parse_twitter_json(json_str: &str, limit: Option<usize>) -> Result<Vec<ImportedPage>> {
     let tweets: Vec<Tweet> = serde_json::from_str(json_str)
-        .map_err(|e| WikiError::YamlParse(format!("Invalid Twitter JSON: {e}")))?;
+        .map_err(|e| WikiError::JsonParse(format!("Invalid Twitter JSON: {e}")))?;
 
     let mut pages = Vec::new();
     for tweet in &tweets {
-        if let Some(max) = limit {
-            if pages.len() >= max {
-                break;
-            }
+        if let Some(max) = limit
+            && pages.len() >= max
+        {
+            break;
         }
 
         if tweet.full_text.len() < 20 {
@@ -54,7 +54,7 @@ pub fn parse_twitter_json(json_str: &str, limit: Option<usize>) -> Result<Vec<Im
             .replace('\n', " ");
         let title = title.trim().to_string();
 
-        let slug = slugify_title(&title);
+        let slug = slugify(&title);
 
         let engagement = format!(
             "likes:{} bookmarks:{} views:{}",
@@ -89,22 +89,4 @@ pub fn parse_twitter_json(json_str: &str, limit: Option<usize>) -> Result<Vec<Im
     }
 
     Ok(pages)
-}
-
-fn slugify_title(title: &str) -> String {
-    title
-        .to_lowercase()
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c > '\u{2E7F}' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<&str>>()
-        .join("-")
 }

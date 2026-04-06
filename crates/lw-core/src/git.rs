@@ -10,37 +10,6 @@ pub fn page_age_days(path: &Path) -> Option<i64> {
             "log",
             "--follow",
             "-1",
-            "--format=%aI",
-            "--",
-            path.to_str()?,
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        tracing::debug!(path = %path.display(), "git log returned non-zero");
-        return None;
-    }
-
-    let date_str = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    if date_str.is_empty() {
-        return None;
-    }
-
-    // Parse ISO 8601 date manually (avoid chrono dependency)
-    // Format: 2026-04-06T12:00:00+08:00
-    // We just need the date part for day-level granularity
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs() as i64;
-
-    // Parse the date using git's own timestamp conversion
-    let git_ts = Command::new("git")
-        .args([
-            "log",
-            "--follow",
-            "-1",
             "--format=%at",
             "--",
             path.to_str()?,
@@ -48,12 +17,19 @@ pub fn page_age_days(path: &Path) -> Option<i64> {
         .output()
         .ok()?;
 
-    if !git_ts.status.success() {
-        tracing::debug!(path = %path.display(), "git log timestamp returned non-zero");
+    if !output.status.success() {
         return None;
     }
 
-    let ts: i64 = String::from_utf8(git_ts.stdout).ok()?.trim().parse().ok()?;
+    let ts: i64 = String::from_utf8(output.stdout).ok()?.trim().parse().ok()?;
+    if ts == 0 {
+        return None;
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
     Some((now - ts) / 86400)
 }
 
