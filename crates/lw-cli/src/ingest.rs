@@ -35,7 +35,9 @@ pub fn run(
     let mut url_origin: Option<String> = None;
 
     // Resolve source: URL download, stdin, or local file
-    let _url_temp;
+    // Keep temp resources alive so paths remain valid for the duration of this function.
+    let _url_temp_dir;
+    let _url_file_path;
     let _stdin_temp;
     let source_path = if stdin_mode {
         let mut content = String::new();
@@ -53,10 +55,12 @@ pub fn run(
         })?;
 
         if is_url(source_str) {
-            // Download URL to temp file
-            _url_temp = download_url(source_str)?;
+            // Download URL to temp directory with proper filename
+            let (dir, path) = download_url(source_str)?;
+            _url_temp_dir = Some(dir);
+            _url_file_path = path;
             url_origin = Some(source_str.to_string());
-            _url_temp.path()
+            _url_file_path.as_path()
         } else {
             let p = Path::new(source_str);
             if !p.exists() {
@@ -65,7 +69,6 @@ pub fn run(
                     p.display()
                 );
             }
-            // Leak-free: path lives as long as source_str (which lives for the call)
             p
         }
     };
@@ -255,16 +258,21 @@ pub fn filename_from_url(url: &str) -> String {
     segment.to_string()
 }
 
-/// Download a URL to a temporary file and return the path.
-fn download_url(url: &str) -> anyhow::Result<tempfile::NamedTempFile> {
+/// Download a URL to a temporary directory with a proper filename.
+///
+/// Returns the temp directory (to keep it alive) and the path to the file.
+fn download_url(url: &str) -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf)> {
     eprintln!("Downloading {}...", url);
     let response = ureq::get(url)
         .call()
         .map_err(|e| anyhow::anyhow!("Failed to download URL: {}", e))?;
 
-    let mut temp = tempfile::NamedTempFile::with_suffix(format!("_{}", filename_from_url(url)))?;
-    std::io::copy(&mut response.into_body().as_reader(), &mut temp)?;
-    Ok(temp)
+    let dir = tempfile::tempdir()?;
+    let filename = filename_from_url(url);
+    let file_path = dir.path().join(&filename);
+    let mut file = std::fs::File::create(&file_path)?;
+    std::io::copy(&mut response.into_body().as_reader(), &mut file)?;
+    Ok((dir, file_path))
 }
 
 fn confirm(prompt: &str, default_yes: bool) -> io::Result<bool> {
