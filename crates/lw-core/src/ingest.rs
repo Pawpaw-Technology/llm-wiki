@@ -8,6 +8,7 @@ pub struct IngestResult {
     pub draft: Option<Page>,
 }
 
+#[tracing::instrument(skip(llm))]
 pub async fn ingest_source<L: LlmBackend>(
     wiki_root: &Path,
     source: &Path,

@@ -68,6 +68,7 @@ pub struct TantivySearcher {
 }
 
 impl TantivySearcher {
+    #[tracing::instrument]
     pub fn new(index_dir: &Path) -> Result<Self> {
         let mut schema_builder = Schema::builder();
         let f_path = schema_builder.add_text_field("path", STRING | STORED);
@@ -111,6 +112,7 @@ impl TantivySearcher {
 }
 
 impl Searcher for TantivySearcher {
+    #[tracing::instrument(skip(self, page))]
     fn index_page(&self, rel_path: &str, page: &Page) -> Result<()> {
         let writer = self.writer.lock().unwrap();
 
@@ -134,6 +136,7 @@ impl Searcher for TantivySearcher {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     fn remove_page(&self, rel_path: &str) -> Result<()> {
         let writer = self.writer.lock().unwrap();
         let path_term = Term::from_field_text(self.f_path, rel_path);
@@ -141,6 +144,7 @@ impl Searcher for TantivySearcher {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     fn commit(&self) -> Result<()> {
         let mut writer = self.writer.lock().unwrap();
         writer.commit()?;
@@ -148,6 +152,7 @@ impl Searcher for TantivySearcher {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     fn search(&self, query: &SearchQuery) -> Result<SearchResults> {
         let searcher = self.reader.searcher();
 
@@ -235,6 +240,7 @@ impl Searcher for TantivySearcher {
         Ok(SearchResults { hits, total })
     }
 
+    #[tracing::instrument(skip(self))]
     fn rebuild(&self, wiki_dir: &Path) -> Result<()> {
         // Clear all documents.
         {

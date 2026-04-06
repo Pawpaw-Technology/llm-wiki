@@ -34,6 +34,9 @@ pub enum WikiError {
 
     #[error("LLM error: {0}")]
     Llm(String),
+
+    #[error("git error: {0}")]
+    Git(String),
 }
 
 pub type Result<T> = std::result::Result<T, WikiError>;

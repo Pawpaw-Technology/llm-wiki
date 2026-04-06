@@ -3,6 +3,7 @@ use crate::schema::WikiSchema;
 use crate::{Result, WikiError};
 use std::path::{Path, PathBuf};
 
+#[tracing::instrument(skip(schema))]
 pub fn init_wiki(root: &Path, schema: &WikiSchema) -> Result<()> {
     let lw_dir = root.join(".lw");
     std::fs::create_dir_all(&lw_dir)?;
@@ -16,6 +17,7 @@ pub fn init_wiki(root: &Path, schema: &WikiSchema) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument]
 pub fn read_page(path: &Path) -> Result<Page> {
     let content =
         std::fs::read_to_string(path).map_err(|_| WikiError::PageNotFound(path.to_path_buf()))?;
@@ -28,6 +30,7 @@ pub fn read_page(path: &Path) -> Result<Page> {
     })
 }
 
+#[tracing::instrument(skip(page))]
 pub fn write_page(path: &Path, page: &Page) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -36,6 +39,7 @@ pub fn write_page(path: &Path, page: &Page) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument]
 pub fn list_pages(wiki_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut pages = Vec::new();
     walk_md(wiki_dir, wiki_dir, &mut pages)?;
@@ -59,6 +63,7 @@ fn walk_md(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument]
 pub fn load_schema(root: &Path) -> Result<WikiSchema> {
     let schema_path = root.join(".lw/schema.toml");
     if !schema_path.exists() {
@@ -78,6 +83,7 @@ pub fn category_from_path(rel_path: &Path) -> Option<String> {
 
 /// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).
 /// Similar to how git finds `.git/`.
+#[tracing::instrument]
 pub fn discover_wiki_root(start: &Path) -> Option<PathBuf> {
     let mut current = if start.is_file() {
         start.parent()?.to_path_buf()
