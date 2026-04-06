@@ -1,5 +1,5 @@
 use crate::{Result, WikiError};
-use gray_matter::{Matter, ParsedEntity, engine::YAML};
+use gray_matter::{engine::YAML, Matter, ParsedEntity};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +29,18 @@ pub struct Page {
 }
 
 impl Page {
+    pub fn new(title: &str, tags: &[&str], body: &str) -> Self {
+        Self {
+            title: title.to_string(),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            decay: None,
+            sources: vec![],
+            author: None,
+            generator: None,
+            body: body.to_string(),
+        }
+    }
+
     pub fn parse(markdown: &str) -> Result<Self> {
         let matter = Matter::<YAML>::new();
         let parsed: ParsedEntity = matter
@@ -74,4 +86,24 @@ impl Page {
             .expect("frontmatter serialization should not fail");
         format!("---\n{}---\n\n{}", yaml, self.body.trim_start())
     }
+}
+
+/// Convert a title to a URL-safe slug.
+/// Preserves alphanumeric chars and CJK characters, replaces others with hyphens.
+pub fn slugify(title: &str) -> String {
+    title
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c > '\u{2E7F}' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<&str>>()
+        .join("-")
 }
