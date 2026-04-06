@@ -67,7 +67,7 @@ pub fn gather_status(root: &Path) -> crate::Result<WikiStatus> {
         .collect();
     categories.sort_by(|a, b| b.page_count.cmp(&a.page_count));
 
-    let index_present = root.join(".lw/search").exists();
+    let index_present = root.join(crate::INDEX_DIR).exists();
 
     Ok(WikiStatus {
         root: root.display().to_string(),

@@ -32,6 +32,9 @@ mod tests {
 
     #[test]
     fn index_dir_is_search() {
-        assert_eq!(INDEX_DIR, ".lw/search", "canonical index path must be .lw/search");
+        assert_eq!(
+            INDEX_DIR, ".lw/search",
+            "canonical index path must be .lw/search"
+        );
     }
 }

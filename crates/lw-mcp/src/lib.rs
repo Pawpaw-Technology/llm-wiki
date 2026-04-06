@@ -457,7 +457,7 @@ impl WikiMcpServer {
         let schema = lw_core::fs::load_schema(&wiki_root)?;
         let default_review_days = schema.wiki.default_review_days;
 
-        let index_dir = wiki_root.join(".lw/index");
+        let index_dir = wiki_root.join(lw_core::INDEX_DIR);
         std::fs::create_dir_all(&index_dir)?;
 
         let searcher = TantivySearcher::new(&index_dir)?;

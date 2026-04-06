@@ -72,7 +72,7 @@ impl TestWiki {
 
     /// Create a TantivySearcher with its index isolated inside this wiki's temp dir.
     pub fn searcher(&self) -> TantivySearcher {
-        let index_dir = self.root.join(".lw/search");
+        let index_dir = self.root.join(lw_core::INDEX_DIR);
         std::fs::create_dir_all(&index_dir).expect("failed to create index dir");
         TantivySearcher::new(&index_dir).expect("failed to create searcher")
     }
