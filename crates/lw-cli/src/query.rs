@@ -1,7 +1,48 @@
 use crate::output::{self, Format};
 use lw_core::fs::load_schema;
-use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
+use lw_core::git::{FreshnessLevel, compute_freshness, page_age_days};
+use lw_core::search::{SearchHit, SearchQuery, Searcher, TantivySearcher};
 use std::path::Path;
+
+/// A search hit enriched with freshness information.
+#[derive(Debug, Clone)]
+pub struct HitWithFreshness {
+    pub hit: SearchHit,
+    pub freshness: FreshnessLevel,
+}
+
+/// Compute freshness for each search hit by consulting git history.
+pub fn enrich_with_freshness(
+    wiki_dir: &Path,
+    hits: &[SearchHit],
+    default_review_days: u32,
+) -> Vec<HitWithFreshness> {
+    hits.iter()
+        .map(|hit| {
+            let abs_path = wiki_dir.join(&hit.path);
+            let decay = lw_core::fs::read_page(&abs_path)
+                .ok()
+                .and_then(|p| p.decay.clone())
+                .unwrap_or_else(|| "normal".to_string());
+            let age = page_age_days(&abs_path);
+            let freshness = match age {
+                Some(days) => compute_freshness(&decay, days, default_review_days),
+                None => FreshnessLevel::Fresh,
+            };
+            HitWithFreshness {
+                hit: hit.clone(),
+                freshness,
+            }
+        })
+        .collect()
+}
+
+/// Filter to only stale hits.
+pub fn filter_stale(hits: Vec<HitWithFreshness>) -> Vec<HitWithFreshness> {
+    hits.into_iter()
+        .filter(|h| h.freshness == FreshnessLevel::Stale)
+        .collect()
+}
 
 pub fn run(
     root: &Path,
@@ -10,9 +51,10 @@ pub fn run(
     category: &Option<String>,
     limit: usize,
     format: &Format,
+    stale: bool,
 ) -> anyhow::Result<()> {
     // Validate wiki exists (produces actionable error message)
-    load_schema(root)?;
+    let schema = load_schema(root)?;
     let index_dir = root.join(".lw/search");
     std::fs::create_dir_all(&index_dir)?;
     let searcher = TantivySearcher::new(&index_dir)?;
@@ -33,6 +75,91 @@ pub fn run(
         limit,
     };
     let results = searcher.search(&query)?;
-    output::print_query_results(text, &results.hits, results.total, format);
+
+    // Enrich hits with freshness from git
+    let enriched = enrich_with_freshness(&wiki_dir, &results.hits, schema.wiki.default_review_days);
+
+    // Apply stale filter if requested
+    let enriched = if stale {
+        filter_stale(enriched)
+    } else {
+        enriched
+    };
+
+    let total = if stale { enriched.len() } else { results.total };
+    output::print_query_results_with_freshness(text, &enriched, total, format);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_hit(path: &str, title: &str) -> SearchHit {
+        SearchHit {
+            path: path.to_string(),
+            title: title.to_string(),
+            tags: vec![],
+            category: "test".to_string(),
+            snippet: String::new(),
+            score: 1.0,
+        }
+    }
+
+    #[test]
+    fn filter_stale_keeps_only_stale() {
+        let hits = vec![
+            HitWithFreshness {
+                hit: make_hit("a.md", "Fresh Page"),
+                freshness: FreshnessLevel::Fresh,
+            },
+            HitWithFreshness {
+                hit: make_hit("b.md", "Stale Page"),
+                freshness: FreshnessLevel::Stale,
+            },
+            HitWithFreshness {
+                hit: make_hit("c.md", "Suspect Page"),
+                freshness: FreshnessLevel::Suspect,
+            },
+        ];
+
+        let result = filter_stale(hits);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].hit.title, "Stale Page");
+        assert_eq!(result[0].freshness, FreshnessLevel::Stale);
+    }
+
+    #[test]
+    fn filter_stale_empty_when_none_stale() {
+        let hits = vec![
+            HitWithFreshness {
+                hit: make_hit("a.md", "Fresh Page"),
+                freshness: FreshnessLevel::Fresh,
+            },
+            HitWithFreshness {
+                hit: make_hit("b.md", "Suspect Page"),
+                freshness: FreshnessLevel::Suspect,
+            },
+        ];
+
+        let result = filter_stale(hits);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_stale_all_stale() {
+        let hits = vec![
+            HitWithFreshness {
+                hit: make_hit("a.md", "Old Page 1"),
+                freshness: FreshnessLevel::Stale,
+            },
+            HitWithFreshness {
+                hit: make_hit("b.md", "Old Page 2"),
+                freshness: FreshnessLevel::Stale,
+            },
+        ];
+
+        let result = filter_stale(hits);
+        assert_eq!(result.len(), 2);
+    }
 }

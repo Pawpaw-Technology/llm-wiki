@@ -35,7 +35,7 @@ enum Commands {
 
     /// Search wiki pages
     #[command(
-        after_help = "Examples:\n  lw query \"attention mechanism\"\n  lw query \"transformer\" --tag architecture --format json\n  lw query \"gpu\" --format brief\n  lw query \"\" --tag training"
+        after_help = "Examples:\n  lw query \"attention mechanism\"\n  lw query \"transformer\" --tag architecture --format json\n  lw query \"gpu\" --stale --format brief\n  lw query \"\" --tag training"
     )]
     Query {
         /// Search text (use "" for tag/category-only queries)
@@ -52,6 +52,9 @@ enum Commands {
         /// Output format
         #[arg(short, long, default_value = "human")]
         format: Format,
+        /// Only show stale pages (freshness == Stale)
+        #[arg(long)]
+        stale: bool,
     },
 
     /// Ingest source material into the wiki
@@ -166,8 +169,9 @@ fn main() {
             category,
             limit,
             format,
+            stale,
         } => match resolve_root(cli.root) {
-            Ok(root) => query::run(&root, &text, &tag, &category, limit, &format),
+            Ok(root) => query::run(&root, &text, &tag, &category, limit, &format, stale),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);

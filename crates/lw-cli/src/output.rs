@@ -1,5 +1,7 @@
+use crate::query::HitWithFreshness;
+use lw_core::git::FreshnessLevel;
 use lw_core::page::Page;
-use lw_core::search::SearchHit;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -25,21 +27,44 @@ pub struct QueryResult {
     pub tags: Vec<String>,
     pub category: String,
     pub snippet: String,
+    pub freshness: String,
 }
 
-impl From<&SearchHit> for QueryResult {
-    fn from(hit: &SearchHit) -> Self {
+impl QueryResult {
+    pub fn from_enriched(enriched: &HitWithFreshness) -> Self {
         Self {
-            path: hit.path.clone(),
-            title: hit.title.clone(),
-            tags: hit.tags.clone(),
-            category: hit.category.clone(),
-            snippet: hit.snippet.clone(),
+            path: enriched.hit.path.clone(),
+            title: enriched.hit.title.clone(),
+            tags: enriched.hit.tags.clone(),
+            category: enriched.hit.category.clone(),
+            snippet: enriched.hit.snippet.clone(),
+            freshness: freshness_label(enriched.freshness),
         }
     }
 }
 
-pub fn print_query_results(query: &str, hits: &[SearchHit], total: usize, format: &Format) {
+fn freshness_label(level: FreshnessLevel) -> String {
+    match level {
+        FreshnessLevel::Fresh => "fresh".to_string(),
+        FreshnessLevel::Suspect => "suspect".to_string(),
+        FreshnessLevel::Stale => "stale".to_string(),
+    }
+}
+
+fn freshness_suffix(level: FreshnessLevel) -> String {
+    match level {
+        FreshnessLevel::Fresh => String::new(),
+        FreshnessLevel::Suspect => " [suspect]".to_string(),
+        FreshnessLevel::Stale => " [stale]".to_string(),
+    }
+}
+
+pub fn print_query_results_with_freshness(
+    query: &str,
+    hits: &[HitWithFreshness],
+    total: usize,
+    format: &Format,
+) {
     match format {
         Format::Json => {
             let envelope = QueryEnvelope {
@@ -47,7 +72,7 @@ pub fn print_query_results(query: &str, hits: &[SearchHit], total: usize, format
                 query: query.into(),
                 total,
                 returned: hits.len(),
-                results: hits.iter().map(QueryResult::from).collect(),
+                results: hits.iter().map(QueryResult::from_enriched).collect(),
             };
             println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
         }
@@ -57,13 +82,15 @@ pub fn print_query_results(query: &str, hits: &[SearchHit], total: usize, format
                 std::process::exit(2);
             }
             println!();
-            for (i, hit) in hits.iter().enumerate() {
+            for (i, enriched) in hits.iter().enumerate() {
+                let hit = &enriched.hit;
                 let tags = if hit.tags.is_empty() {
                     String::new()
                 } else {
                     format!("  [{}]", hit.tags.join(", "))
                 };
-                println!("  {}. wiki/{}{}", i + 1, hit.path, tags);
+                let fresh = freshness_suffix(enriched.freshness);
+                println!("  {}. wiki/{}{}{}", i + 1, hit.path, tags, fresh);
                 if !hit.snippet.is_empty() {
                     let clean = hit.snippet.replace("<b>", "").replace("</b>", "");
                     println!("     {}", clean.trim());
@@ -75,8 +102,15 @@ pub fn print_query_results(query: &str, hits: &[SearchHit], total: usize, format
             if hits.is_empty() {
                 std::process::exit(2);
             }
-            for hit in hits {
-                println!("{}\t{}\t[{}]", hit.path, hit.title, hit.tags.join(","));
+            for enriched in hits {
+                let hit = &enriched.hit;
+                println!(
+                    "{}\t{}\t[{}]\t{}",
+                    hit.path,
+                    hit.title,
+                    hit.tags.join(","),
+                    freshness_label(enriched.freshness)
+                );
             }
         }
     }
