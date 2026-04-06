@@ -26,7 +26,7 @@ pub enum WikiError {
     #[error("schema not found: {0}")]
     SchemaNotFound(PathBuf),
 
-    #[error("not a wiki directory: {0} (missing .lw/schema.toml)")]
+    #[error("not a wiki directory: {0} (missing .lw/schema.toml)\n  Run: lw init --root <path>")]
     NotAWiki(PathBuf),
 
     #[error("LLM backend unavailable")]
