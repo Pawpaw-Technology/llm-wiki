@@ -221,8 +221,7 @@ impl WikiMcpServer {
 
                     // Stale filter
                     if stale_only {
-                        let level =
-                            git::page_freshness(&abs_path, self.default_review_days);
+                        let level = git::page_freshness(&abs_path, self.default_review_days);
                         if level == FreshnessLevel::Fresh {
                             continue;
                         }

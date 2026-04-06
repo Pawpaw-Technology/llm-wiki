@@ -1,5 +1,5 @@
 use crate::output::Format;
-use lw_core::fs::{load_schema, write_page};
+use lw_core::fs::{load_schema, validate_wiki_path, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
 use lw_core::page::{Page, slugify};
@@ -86,6 +86,9 @@ pub fn run(
                 .collect()
         })
         .unwrap_or_default();
+
+    // Validate category early to reject path traversal before any I/O
+    validate_wiki_path(root, &format!("{}/probe.md", cat))?;
 
     if dry_run {
         // Dry run: compute what would be created without writing anything
@@ -195,9 +198,10 @@ pub fn run(
     }
 
     let slug = slugify(&draft.title);
-    let rel_path = format!("wiki/{}/{}.md", cat, slug);
-    let page_path = root.join(&rel_path);
+    let rel_path = format!("{}/{}.md", cat, slug);
+    let page_path = validate_wiki_path(root, &rel_path)?;
     write_page(&page_path, &draft)?;
+    let rel_path = format!("wiki/{}", rel_path);
 
     let output = IngestOutput {
         path: rel_path.clone(),

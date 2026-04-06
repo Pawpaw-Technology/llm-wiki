@@ -116,16 +116,19 @@ pub fn validate_wiki_path(wiki_root: &Path, relative_path: &str) -> Result<PathB
     let resolved = wiki_dir.join(rel);
 
     // If the path exists on disk, canonicalize to resolve symlinks.
-    // Fall back to lexical check for new pages that don't exist yet.
+    // For new pages that don't exist yet, canonicalize the closest existing
+    // ancestor and append the remaining components. This avoids false positives
+    // on platforms where temp paths traverse symlinks (e.g. macOS /tmp →
+    // /private/tmp).
     let check_path = if resolved.exists() {
         resolved.canonicalize().unwrap_or_else(|_| resolved.clone())
     } else {
-        resolved.clone()
+        canonicalize_ancestor(&resolved)
     };
     let check_base = if wiki_dir.exists() {
         wiki_dir.canonicalize().unwrap_or_else(|_| wiki_dir.clone())
     } else {
-        wiki_dir
+        canonicalize_ancestor(&wiki_dir)
     };
 
     if !check_path.starts_with(&check_base) {
@@ -135,6 +138,28 @@ pub fn validate_wiki_path(wiki_root: &Path, relative_path: &str) -> Result<PathB
     }
 
     Ok(resolved)
+}
+
+/// Canonicalize a path that may not fully exist on disk by walking up to the
+/// closest existing ancestor, canonicalizing it, and re-appending the
+/// non-existent tail components.
+fn canonicalize_ancestor(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut tail = Vec::new();
+    while !existing.exists() {
+        if let Some(name) = existing.file_name() {
+            tail.push(name.to_os_string());
+        } else {
+            // Reached filesystem root or an unparseable path — give up
+            return path.to_path_buf();
+        }
+        existing.pop();
+    }
+    let mut result = existing.canonicalize().unwrap_or_else(|_| existing.clone());
+    for component in tail.into_iter().rev() {
+        result.push(component);
+    }
+    result
 }
 
 /// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).
