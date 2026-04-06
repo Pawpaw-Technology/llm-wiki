@@ -2,6 +2,7 @@ mod ingest;
 mod init;
 mod output;
 mod query;
+mod serve;
 mod status;
 
 use clap::Parser;
@@ -85,6 +86,10 @@ enum Commands {
         #[arg(short, long, default_value = "human")]
         format: Format,
     },
+
+    /// Start MCP server (stdio)
+    #[command(after_help = "Examples:\n  lw serve\n  lw serve --root /path/to/wiki")]
+    Serve,
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -154,6 +159,13 @@ fn main() {
         },
         Commands::Status { format } => match resolve_root(cli.root) {
             Ok(root) => status::run(&root, &format),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Serve => match resolve_root(cli.root) {
+            Ok(root) => serve::run(&root),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);

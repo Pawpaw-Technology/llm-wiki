@@ -831,6 +831,7 @@ dependencies = [
 name = "lw-mcp"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "lw-core",
  "rmcp",
  "serde",
