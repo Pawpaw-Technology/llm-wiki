@@ -2,7 +2,7 @@ use crate::output::Format;
 use lw_core::fs::{load_schema, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
-use lw_core::page::{Page, slugify};
+use lw_core::page::{slugify, Page};
 use serde::Serialize;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -89,16 +89,7 @@ pub fn run(
 
     if dry_run {
         // Dry run: compute what would be created without writing anything
-        let auto_title = title.clone().unwrap_or_else(|| {
-            if let Some(ref url) = url_origin {
-                filename_from_url(url)
-            } else {
-                source_path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Untitled".to_string())
-            }
-        });
+        let auto_title = derive_title(title.as_deref(), source_path, url_origin.as_deref());
         let slug = slugify(&auto_title);
         let decay = schema.decay_for_category(&cat).to_string();
         let rel_path = format!("wiki/{}/{}.md", cat, slug);
@@ -139,16 +130,7 @@ pub fn run(
     let draft = if let Some(draft) = result.draft {
         draft
     } else {
-        let auto_title = title.clone().unwrap_or_else(|| {
-            if let Some(ref url) = url_origin {
-                filename_from_url(url)
-            } else {
-                source_path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Untitled".to_string())
-            }
-        });
+        let auto_title = derive_title(title.as_deref(), source_path, url_origin.as_deref());
 
         // Build sources list: raw path + original URL if applicable
         let raw_ref = format!(
@@ -219,6 +201,48 @@ pub fn run(
     }
 
     Ok(())
+}
+
+/// Extract the first H1 heading from markdown content.
+/// Returns None if no H1 is found.
+fn extract_h1(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            let title = title.trim();
+            if !title.is_empty() {
+                return Some(title.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Derive a title for an ingested page.
+/// Priority: explicit --title > H1 from content > URL filename > file stem
+fn derive_title(
+    explicit_title: Option<&str>,
+    source_path: &Path,
+    url_origin: Option<&str>,
+) -> String {
+    if let Some(t) = explicit_title {
+        return t.to_string();
+    }
+    // Try H1 from markdown
+    if let Ok(content) = std::fs::read_to_string(source_path)
+        && let Some(h1) = extract_h1(&content)
+    {
+        return h1;
+    }
+    // URL filename
+    if let Some(url) = url_origin {
+        return filename_from_url(url);
+    }
+    // Fall back to file stem
+    source_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Untitled".to_string())
 }
 
 /// Detect if a source string looks like a URL (http:// or https://).
