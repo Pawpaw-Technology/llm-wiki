@@ -8,6 +8,9 @@ pub enum WikiError {
     #[error("index error: {0}")]
     Tantivy(#[from] tantivy::TantivyError),
 
+    #[error("index directory error: {0}")]
+    OpenDirectory(#[from] tantivy::directory::error::OpenDirectoryError),
+
     #[error("TOML parse error: {0}")]
     TomlParse(#[from] toml::de::Error),
 
