@@ -17,6 +17,8 @@ use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Te
 pub struct SearchHit {
     pub path: String,
     pub title: String,
+    pub tags: Vec<String>,
+    pub category: String,
     pub snippet: String,
     pub score: f32,
 }
@@ -201,6 +203,17 @@ impl Searcher for TantivySearcher {
                 .unwrap_or("")
                 .to_string();
 
+            let tags: Vec<String> = doc
+                .get_all(self.f_tags)
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+
+            let category = doc
+                .get_first(self.f_category)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
             let snippet = snippet_gen.snippet_from_doc(&doc);
             let snippet_text = if snippet.is_empty() {
                 String::new()
@@ -211,6 +224,8 @@ impl Searcher for TantivySearcher {
             hits.push(SearchHit {
                 path,
                 title,
+                tags,
+                category,
                 snippet: snippet_text,
                 score: *score,
             });
