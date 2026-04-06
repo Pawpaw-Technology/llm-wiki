@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{
-    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
+    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
@@ -313,6 +313,97 @@ mod tests {
         assert_eq!(
             TantivySearcher::category_from_path("architecture/transformers/a.md"),
             "architecture"
+        );
+    }
+
+    /// Helper: create a TantivySearcher in a temp dir, index a page, commit, return searcher.
+    fn setup_searcher_with_page(
+        dir: &std::path::Path,
+        rel_path: &str,
+        page: &crate::page::Page,
+    ) -> TantivySearcher {
+        let searcher = TantivySearcher::new(dir).expect("create searcher");
+        searcher.index_page(rel_path, page).expect("index page");
+        searcher.commit().expect("commit");
+        searcher
+    }
+
+    #[test]
+    fn test_snippet_no_html_tags() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let page = crate::page::Page::new(
+            "Attention Is All You Need",
+            &["transformer", "attention"],
+            "The dominant sequence transduction models are based on complex recurrent \
+             or convolutional neural networks. The best performing models also connect \
+             the encoder and decoder through an attention mechanism. We propose a new \
+             simple network architecture, the Transformer, based solely on attention \
+             mechanisms, dispensing with recurrence and convolutions entirely.",
+        );
+
+        let searcher = setup_searcher_with_page(tmp.path(), "architecture/attention.md", &page);
+
+        let results = searcher
+            .search(&SearchQuery {
+                text: Some("attention mechanism".to_string()),
+                tags: vec![],
+                category: None,
+                limit: 10,
+            })
+            .expect("search");
+
+        assert!(!results.hits.is_empty(), "should have at least one hit");
+
+        for hit in &results.hits {
+            assert!(
+                !hit.snippet.contains("<b>"),
+                "snippet must not contain <b> tag, got: {}",
+                hit.snippet
+            );
+            assert!(
+                !hit.snippet.contains("</b>"),
+                "snippet must not contain </b> tag, got: {}",
+                hit.snippet
+            );
+        }
+    }
+
+    #[test]
+    fn test_snippet_preserves_highlighted_text() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let page = crate::page::Page::new(
+            "Transformer Architecture",
+            &["transformer"],
+            "The transformer architecture uses self-attention to process input sequences \
+             in parallel. Multi-head attention allows the model to jointly attend to \
+             information from different representation subspaces.",
+        );
+
+        let searcher = setup_searcher_with_page(tmp.path(), "architecture/transformer.md", &page);
+
+        let results = searcher
+            .search(&SearchQuery {
+                text: Some("attention".to_string()),
+                tags: vec![],
+                category: None,
+                limit: 10,
+            })
+            .expect("search");
+
+        assert!(!results.hits.is_empty(), "should have at least one hit");
+
+        let snippet = &results.hits[0].snippet;
+        // The word "attention" should still appear in the snippet text (just not wrapped in HTML).
+        assert!(
+            snippet.to_lowercase().contains("attention"),
+            "snippet should contain the search term 'attention', got: {}",
+            snippet
+        );
+        // And no HTML tags.
+        assert!(
+            !snippet.contains('<'),
+            "snippet must not contain any HTML tags, got: {}",
+            snippet
         );
     }
 }
