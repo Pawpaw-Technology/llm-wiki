@@ -46,7 +46,7 @@ fn step3_search_text_and_tag_filter() {
 
     let results = searcher
         .search(&SearchQuery {
-            text: "attention".into(),
+            text: Some("attention".into()),
             tags: vec![],
             category: None,
             limit: 10,
@@ -63,7 +63,7 @@ fn step3_search_text_and_tag_filter() {
 
     let filtered = searcher
         .search(&SearchQuery {
-            text: "training".into(),
+            text: Some("training".into()),
             tags: vec!["training".into()],
             category: None,
             limit: 10,
@@ -168,7 +168,7 @@ async fn full_agent_workflow() {
     searcher.commit().unwrap();
     let results = searcher
         .search(&SearchQuery {
-            text: "attention".into(),
+            text: Some("attention".into()),
             tags: vec![],
             category: None,
             limit: 10,

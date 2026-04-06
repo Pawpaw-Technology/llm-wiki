@@ -16,7 +16,7 @@ use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Te
 // ---------------------------------------------------------------------------
 
 /// A single search hit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SearchHit {
     pub path: String,
     pub title: String,
@@ -27,7 +27,7 @@ pub struct SearchHit {
 }
 
 /// Aggregated search results.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SearchResults {
     pub hits: Vec<SearchHit>,
     pub total: usize,
@@ -36,7 +36,7 @@ pub struct SearchResults {
 /// Parameters for a search query.
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
-    pub text: String,
+    pub text: Option<String>,
     pub tags: Vec<String>,
     pub category: Option<String>,
     pub limit: usize,
@@ -131,7 +131,10 @@ impl TantivySearcher {
 impl Searcher for TantivySearcher {
     #[tracing::instrument(skip(self, page))]
     fn index_page(&self, rel_path: &str, page: &Page) -> Result<()> {
-        let writer = self.writer.lock().unwrap();
+        let writer = self
+            .writer
+            .lock()
+            .map_err(|e| WikiError::Internal(e.to_string()))?;
 
         // Remove any previous version of this page.
         let path_term = Term::from_field_text(self.f_path, rel_path);
@@ -155,7 +158,10 @@ impl Searcher for TantivySearcher {
 
     #[tracing::instrument(skip(self))]
     fn remove_page(&self, rel_path: &str) -> Result<()> {
-        let writer = self.writer.lock().unwrap();
+        let writer = self
+            .writer
+            .lock()
+            .map_err(|e| WikiError::Internal(e.to_string()))?;
         let path_term = Term::from_field_text(self.f_path, rel_path);
         writer.delete_term(path_term);
         Ok(())
@@ -163,7 +169,10 @@ impl Searcher for TantivySearcher {
 
     #[tracing::instrument(skip(self))]
     fn commit(&self) -> Result<()> {
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|e| WikiError::Internal(e.to_string()))?;
         writer.commit()?;
         self.reader.reload()?;
         Ok(())
@@ -171,15 +180,26 @@ impl Searcher for TantivySearcher {
 
     #[tracing::instrument(skip(self))]
     fn search(&self, query: &SearchQuery) -> Result<SearchResults> {
+        use tantivy::query::AllQuery;
+
         let searcher = self.reader.searcher();
 
-        let query_parser = QueryParser::for_index(&self.index, vec![self.f_title, self.f_body]);
-        let text_query = query_parser.parse_query(&query.text).map_err(|e| {
-            WikiError::Tantivy(tantivy::TantivyError::InvalidArgument(e.to_string()))
-        })?;
-
         let mut subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-        subqueries.push((Occur::Must, text_query));
+
+        // Text query: if provided, parse and require; otherwise match all.
+        match &query.text {
+            Some(text) if !text.is_empty() => {
+                let query_parser =
+                    QueryParser::for_index(&self.index, vec![self.f_title, self.f_body]);
+                let text_query = query_parser.parse_query(text).map_err(|e| {
+                    WikiError::Tantivy(tantivy::TantivyError::InvalidArgument(e.to_string()))
+                })?;
+                subqueries.push((Occur::Must, text_query));
+            }
+            _ => {
+                subqueries.push((Occur::Must, Box::new(AllQuery)));
+            }
+        }
 
         // Tag filters — each required tag must be present.
         for tag in &query.tags {
@@ -261,7 +281,10 @@ impl Searcher for TantivySearcher {
     fn rebuild(&self, wiki_dir: &Path) -> Result<()> {
         // Clear all documents.
         {
-            let writer = self.writer.lock().unwrap();
+            let writer = self
+                .writer
+                .lock()
+                .map_err(|e| WikiError::Internal(e.to_string()))?;
             writer.delete_all_documents()?;
         }
         self.commit()?;

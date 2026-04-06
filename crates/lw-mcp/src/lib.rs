@@ -119,7 +119,11 @@ impl WikiMcpServer {
             .unwrap_or_default();
 
         let sq = SearchQuery {
-            text: args.query,
+            text: if args.query.is_empty() {
+                None
+            } else {
+                Some(args.query)
+            },
             tags,
             category: args.category,
             limit: args.limit.unwrap_or(20),

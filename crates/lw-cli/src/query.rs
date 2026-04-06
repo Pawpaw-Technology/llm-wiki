@@ -21,7 +21,11 @@ pub fn run(
     searcher.rebuild(&wiki_dir)?;
 
     let query = SearchQuery {
-        text: text.to_string(),
+        text: if text.is_empty() {
+            None
+        } else {
+            Some(text.to_string())
+        },
         tags: tags.to_vec(),
         category: category.clone(),
         limit,
