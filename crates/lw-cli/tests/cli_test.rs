@@ -512,6 +512,111 @@ fn ingest_help_shows_url_example() {
         .stdout(predicate::str::contains("http"));
 }
 
+// === read ===
+
+fn setup_wiki_with_page(tmp: &TempDir) {
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/architecture/transformer.md"),
+        "---\ntitle: Flash Attention 2\ntags:\n  - architecture\n  - attention\ndecay: normal\n---\n\nFlash Attention 2 reduces memory usage.\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn read_existing_page() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    lw().args([
+        "read",
+        "architecture/transformer.md",
+        "--root",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("Flash Attention 2"));
+}
+
+#[test]
+fn read_nonexistent_page_fails() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    lw().args([
+        "read",
+        "nonexistent/page.md",
+        "--root",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
+fn read_json_format() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    let output = lw()
+        .args([
+            "read",
+            "architecture/transformer.md",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("read --format json should produce valid JSON");
+    assert_eq!(json["path"], "architecture/transformer.md");
+    assert_eq!(json["title"], "Flash Attention 2");
+    assert!(json["tags"].is_array(), "tags should be an array");
+    assert!(
+        json["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::Value::String("architecture".into())),
+        "tags should contain 'architecture'"
+    );
+    assert!(
+        json["body"].as_str().is_some(),
+        "body field should be present"
+    );
+    assert!(
+        json["body"]
+            .as_str()
+            .unwrap()
+            .contains("reduces memory usage"),
+        "body should contain page content"
+    );
+}
+
+#[test]
+fn read_path_traversal_rejected() {
+    let tmp = TempDir::new().unwrap();
+    setup_wiki_with_page(&tmp);
+    lw().args([
+        "read",
+        "../../etc/passwd",
+        "--root",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
+fn help_shows_read_command() {
+    lw().arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("read"));
+}
+
 // === env var ===
 
 #[test]
