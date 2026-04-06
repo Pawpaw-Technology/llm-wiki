@@ -1,7 +1,8 @@
+use crate::output::Format;
 use lw_core::fs::{load_schema, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
-use lw_core::page::{Page, slugify};
+use lw_core::page::{slugify, Page};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
@@ -15,6 +16,8 @@ pub fn run(
     tags: &Option<String>,
     raw_subdir: &str,
     yes: bool,
+    _dry_run: bool,
+    _output_format: &Format,
 ) -> anyhow::Result<()> {
     let schema = load_schema(root)?;
 

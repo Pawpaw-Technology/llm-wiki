@@ -1,3 +1,4 @@
+use crate::output::Format;
 use lw_core::fs::{load_schema, write_page};
 use lw_core::import::parse_twitter_json;
 use std::path::Path;
@@ -9,6 +10,7 @@ pub fn run(
     category: &str,
     limit: Option<usize>,
     dry_run: bool,
+    _output_format: &Format,
 ) -> anyhow::Result<()> {
     let _schema = load_schema(root)?;
 

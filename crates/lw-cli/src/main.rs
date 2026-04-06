@@ -82,6 +82,12 @@ enum Commands {
         /// Skip interactive prompts (agent mode)
         #[arg(long)]
         yes: bool,
+        /// Preview what would be created without writing files
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format (human or json)
+        #[arg(short = 'o', long, default_value = "human")]
+        output_format: Format,
     },
 
     /// Import batch sources into the wiki
@@ -103,6 +109,9 @@ enum Commands {
         /// Preview without writing
         #[arg(long)]
         dry_run: bool,
+        /// Output format (human or json)
+        #[arg(short = 'o', long, default_value = "human")]
+        output_format: Format,
     },
 
     /// Read a wiki page by path
@@ -185,6 +194,8 @@ fn main() {
             tags,
             raw_type,
             yes,
+            dry_run,
+            output_format,
         } => match resolve_root(cli.root) {
             Ok(root) => ingest::run(
                 &root,
@@ -195,6 +206,8 @@ fn main() {
                 &tags,
                 &raw_type,
                 yes,
+                dry_run,
+                &output_format,
             ),
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -207,8 +220,17 @@ fn main() {
             category,
             limit,
             dry_run,
+            output_format,
         } => match resolve_root(cli.root) {
-            Ok(root) => import::run(&root, &file, &format, &category, limit, dry_run),
+            Ok(root) => import::run(
+                &root,
+                &file,
+                &format,
+                &category,
+                limit,
+                dry_run,
+                &output_format,
+            ),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
