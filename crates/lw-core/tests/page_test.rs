@@ -1,6 +1,35 @@
 use lw_core::page::Page;
 
 #[test]
+fn page_new_convenience() {
+    let page = Page::new("My Title", &["tag1", "tag2"], "Body content.");
+    assert_eq!(page.title, "My Title");
+    assert_eq!(page.tags, vec!["tag1", "tag2"]);
+    assert_eq!(page.body, "Body content.");
+    assert_eq!(page.decay, None);
+    assert!(page.sources.is_empty());
+    assert_eq!(page.author, None);
+    assert_eq!(page.generator, None);
+}
+
+#[test]
+fn slugify_basic() {
+    use lw_core::page::slugify;
+    assert_eq!(slugify("Hello World"), "hello-world");
+    assert_eq!(slugify("Flash Attention 2"), "flash-attention-2");
+    assert_eq!(slugify("  Multiple   Spaces  "), "multiple-spaces");
+    assert_eq!(slugify("Special!@#Characters"), "special-characters");
+}
+
+#[test]
+fn slugify_unicode() {
+    use lw_core::page::slugify;
+    // Chinese characters should be preserved
+    let slug = slugify("创业指南 2024");
+    assert!(slug.contains("创业指南"));
+}
+
+#[test]
 fn parse_full_frontmatter() {
     let md = r#"---
 title: Flash Attention 2
