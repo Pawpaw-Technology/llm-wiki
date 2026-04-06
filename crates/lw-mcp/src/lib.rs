@@ -159,20 +159,18 @@ impl WikiMcpServer {
     fn wiki_read(&self, Parameters(args): Parameters<WikiReadArgs>) -> String {
         let abs_path = self.wiki_root.join("wiki").join(&args.path);
         match read_page(&abs_path) {
-            Ok(page) => {
-                serde_json::json!({
-                    "path": args.path,
-                    "title": page.title,
-                    "tags": page.tags,
-                    "decay": page.decay,
-                    "sources": page.sources,
-                    "author": page.author,
-                    "generator": page.generator,
-                    "body": page.body,
-                    "markdown": page.to_markdown(),
-                })
-                .to_string()
-            }
+            Ok(page) => serde_json::json!({
+                "path": args.path,
+                "title": page.title,
+                "tags": page.tags,
+                "decay": page.decay,
+                "sources": page.sources,
+                "author": page.author,
+                "generator": page.generator,
+                "body": page.body,
+                "markdown": page.to_markdown(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
@@ -190,8 +188,7 @@ impl WikiMcpServer {
                 let mut entries: Vec<serde_json::Value> = Vec::new();
 
                 for rel_path in &pages {
-                    let cat =
-                        category_from_path(rel_path).unwrap_or_default();
+                    let cat = category_from_path(rel_path).unwrap_or_default();
 
                     // Category filter
                     if let Some(ref filter_cat) = args.category {
@@ -258,8 +255,7 @@ impl WikiMcpServer {
                 for rel_path in &page_paths {
                     // Category filter
                     if let Some(ref filter_cat) = args.category {
-                        let cat =
-                            category_from_path(rel_path).unwrap_or_default();
+                        let cat = category_from_path(rel_path).unwrap_or_default();
                         if cat != *filter_cat {
                             continue;
                         }
@@ -343,18 +339,16 @@ impl WikiMcpServer {
 
         let llm = NoopLlm;
         match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type, &llm).await {
-            Ok(result) => {
-                serde_json::json!({
-                    "status": "ok",
-                    "raw_path": result.raw_path.to_string_lossy(),
-                    "suggested_title": args.title,
-                    "suggested_tags": args.tags,
-                    "suggested_category": args.category,
-                    "has_draft": result.draft.is_some(),
-                    "next_step": "Use wiki_write to create the wiki page from this source material.",
-                })
-                .to_string()
-            }
+            Ok(result) => serde_json::json!({
+                "status": "ok",
+                "raw_path": result.raw_path.to_string_lossy(),
+                "suggested_title": args.title,
+                "suggested_tags": args.tags,
+                "suggested_category": args.category,
+                "has_draft": result.draft.is_some(),
+                "next_step": "Use wiki_write to create the wiki page from this source material.",
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),
         }
     }
@@ -373,8 +367,7 @@ impl WikiMcpServer {
                 let mut stale: Vec<serde_json::Value> = Vec::new();
 
                 for rel_path in &page_paths {
-                    let cat =
-                        category_from_path(rel_path).unwrap_or_default();
+                    let cat = category_from_path(rel_path).unwrap_or_default();
 
                     if let Some(ref filter_cat) = args.category {
                         if cat != *filter_cat {
