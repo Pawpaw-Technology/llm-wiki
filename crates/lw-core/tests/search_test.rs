@@ -134,3 +134,74 @@ fn remove_page_from_index() {
     };
     assert_eq!(searcher.search(&query).unwrap().total, 0);
 }
+
+#[test]
+fn search_chinese_text() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+
+    let page = Page {
+        title: "创业指南".to_string(),
+        tags: vec!["startup".to_string()],
+        decay: None,
+        sources: vec![],
+        author: None,
+        generator: None,
+        body: "如果你在创业，陷入焦虑和负面情绪中无法自拔。".to_string(),
+    };
+    searcher
+        .index_page("_uncategorized/startup-guide.md", &page)
+        .unwrap();
+    searcher.commit().unwrap();
+
+    // Search Chinese
+    let q = SearchQuery {
+        text: "创业".into(),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    let results = searcher.search(&q).unwrap();
+    assert!(
+        results.total >= 1,
+        "Chinese search should find results, got {}",
+        results.total
+    );
+    assert_eq!(results.hits[0].title, "创业指南");
+}
+
+#[test]
+fn search_mixed_chinese_english() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+
+    let page = Page {
+        title: "AI Agent 开发实践".to_string(),
+        tags: vec!["ai".to_string(), "agent".to_string()],
+        decay: None,
+        sources: vec![],
+        author: None,
+        generator: None,
+        body: "使用 Claude Code 进行 AI Agent 开发的最佳实践。".to_string(),
+    };
+    searcher.index_page("tools/ai-agent-dev.md", &page).unwrap();
+    searcher.commit().unwrap();
+
+    // English term in mixed content
+    let q1 = SearchQuery {
+        text: "Claude".into(),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    assert!(searcher.search(&q1).unwrap().total >= 1);
+
+    // Chinese term in mixed content
+    let q2 = SearchQuery {
+        text: "开发".into(),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    assert!(searcher.search(&q2).unwrap().total >= 1);
+}
