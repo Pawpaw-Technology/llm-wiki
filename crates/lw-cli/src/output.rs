@@ -1,5 +1,4 @@
 use crate::query::HitWithFreshness;
-use lw_core::git::FreshnessLevel;
 use lw_core::page::Page;
 
 use serde::Serialize;
@@ -38,24 +37,8 @@ impl QueryResult {
             tags: enriched.hit.tags.clone(),
             category: enriched.hit.category.clone(),
             snippet: enriched.hit.snippet.clone(),
-            freshness: freshness_label(enriched.freshness),
+            freshness: enriched.freshness.to_string(),
         }
-    }
-}
-
-fn freshness_label(level: FreshnessLevel) -> String {
-    match level {
-        FreshnessLevel::Fresh => "fresh".to_string(),
-        FreshnessLevel::Suspect => "suspect".to_string(),
-        FreshnessLevel::Stale => "stale".to_string(),
-    }
-}
-
-fn freshness_suffix(level: FreshnessLevel) -> String {
-    match level {
-        FreshnessLevel::Fresh => String::new(),
-        FreshnessLevel::Suspect => " [suspect]".to_string(),
-        FreshnessLevel::Stale => " [stale]".to_string(),
     }
 }
 
@@ -74,7 +57,11 @@ pub fn print_query_results_with_freshness(
                 returned: hits.len(),
                 results: hits.iter().map(QueryResult::from_enriched).collect(),
             };
-            println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&envelope)
+                    .expect("serialization of string-only struct")
+            );
         }
         Format::Human => {
             if hits.is_empty() {
@@ -89,8 +76,8 @@ pub fn print_query_results_with_freshness(
                 } else {
                     format!("  [{}]", hit.tags.join(", "))
                 };
-                let fresh = freshness_suffix(enriched.freshness);
-                println!("  {}. wiki/{}{}{}", i + 1, hit.path, tags, fresh);
+                let suffix = enriched.freshness.suffix();
+                println!("  {}. wiki/{}{}{}", i + 1, hit.path, tags, suffix);
                 if !hit.snippet.is_empty() {
                     println!("     {}", hit.snippet.trim());
                 }
@@ -108,7 +95,7 @@ pub fn print_query_results_with_freshness(
                     hit.path,
                     hit.title,
                     hit.tags.join(","),
-                    freshness_label(enriched.freshness)
+                    enriched.freshness
                 );
             }
         }
@@ -150,7 +137,11 @@ pub fn print_page(path: &str, page: &Page, format: &Format) {
                 sources: page.sources.clone(),
                 body: page.body.clone(),
             };
-            println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&envelope)
+                    .expect("serialization of string-only struct")
+            );
         }
         Format::Brief => {
             println!("{}\t{}\t[{}]", path, page.title, page.tags.join(","));

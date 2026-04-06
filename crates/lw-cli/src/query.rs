@@ -1,6 +1,6 @@
 use crate::output::{self, Format};
 use lw_core::fs::load_schema;
-use lw_core::git::{FreshnessLevel, compute_freshness, page_age_days};
+use lw_core::git::{page_freshness, FreshnessLevel};
 use lw_core::search::{SearchHit, SearchQuery, Searcher, TantivySearcher};
 use std::path::Path;
 
@@ -20,15 +20,7 @@ pub fn enrich_with_freshness(
     hits.iter()
         .map(|hit| {
             let abs_path = wiki_dir.join(&hit.path);
-            let decay = lw_core::fs::read_page(&abs_path)
-                .ok()
-                .and_then(|p| p.decay.clone())
-                .unwrap_or_else(|| "normal".to_string());
-            let age = page_age_days(&abs_path);
-            let freshness = match age {
-                Some(days) => compute_freshness(&decay, days, default_review_days),
-                None => FreshnessLevel::Fresh,
-            };
+            let freshness = page_freshness(&abs_path, default_review_days);
             HitWithFreshness {
                 hit: hit.clone(),
                 freshness,

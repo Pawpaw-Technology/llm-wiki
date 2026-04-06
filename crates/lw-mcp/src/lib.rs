@@ -221,14 +221,8 @@ impl WikiMcpServer {
 
                     // Stale filter
                     if stale_only {
-                        let age = git::page_age_days(&abs_path);
-                        let decay = page.decay.as_deref().unwrap_or("normal");
-                        let level = match age {
-                            Some(days) => {
-                                git::compute_freshness(decay, days, self.default_review_days)
-                            }
-                            None => FreshnessLevel::Fresh,
-                        };
+                        let level =
+                            git::page_freshness(&abs_path, self.default_review_days);
                         if level == FreshnessLevel::Fresh {
                             continue;
                         }

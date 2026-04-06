@@ -2,7 +2,7 @@ use crate::output::{self, Format};
 use std::path::Path;
 
 pub fn run(root: &Path, path: &str, format: &Format) -> anyhow::Result<()> {
-    let abs_path = root.join("wiki").join(path);
+    let abs_path = lw_core::fs::validate_wiki_path(root, path)?;
     let page = lw_core::fs::read_page(&abs_path)?;
     output::print_page(path, &page, format);
     Ok(())

@@ -115,9 +115,20 @@ pub fn validate_wiki_path(wiki_root: &Path, relative_path: &str) -> Result<PathB
     let wiki_dir = wiki_root.join("wiki");
     let resolved = wiki_dir.join(rel);
 
-    // Belt-and-suspenders: verify the resolved path starts with wiki_dir.
-    // This catches edge cases that component checking might miss.
-    if !resolved.starts_with(&wiki_dir) {
+    // If the path exists on disk, canonicalize to resolve symlinks.
+    // Fall back to lexical check for new pages that don't exist yet.
+    let check_path = if resolved.exists() {
+        resolved.canonicalize().unwrap_or_else(|_| resolved.clone())
+    } else {
+        resolved.clone()
+    };
+    let check_base = if wiki_dir.exists() {
+        wiki_dir.canonicalize().unwrap_or_else(|_| wiki_dir.clone())
+    } else {
+        wiki_dir
+    };
+
+    if !check_path.starts_with(&check_base) {
         return Err(WikiError::PathTraversal(
             "resolved path is outside the wiki directory".to_string(),
         ));

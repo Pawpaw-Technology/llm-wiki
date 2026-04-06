@@ -44,10 +44,35 @@ pub enum FreshnessLevel {
 impl std::fmt::Display for FreshnessLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FreshnessLevel::Fresh => write!(f, "FRESH"),
-            FreshnessLevel::Suspect => write!(f, "SUSPECT"),
-            FreshnessLevel::Stale => write!(f, "STALE"),
+            FreshnessLevel::Fresh => write!(f, "fresh"),
+            FreshnessLevel::Suspect => write!(f, "suspect"),
+            FreshnessLevel::Stale => write!(f, "stale"),
         }
+    }
+}
+
+impl FreshnessLevel {
+    /// Returns a human-readable suffix like " [stale]" or empty for fresh.
+    pub fn suffix(&self) -> &'static str {
+        match self {
+            FreshnessLevel::Fresh => "",
+            FreshnessLevel::Suspect => " [suspect]",
+            FreshnessLevel::Stale => " [stale]",
+        }
+    }
+}
+
+/// Compute a page's freshness from its file path.
+/// Reads the page to get the decay field, then checks git history for age.
+/// Returns `Fresh` if the file has no git history.
+pub fn page_freshness(abs_path: &Path, default_review_days: u32) -> FreshnessLevel {
+    let decay = crate::fs::read_page(abs_path)
+        .ok()
+        .and_then(|p| p.decay)
+        .unwrap_or_else(|| "normal".to_string());
+    match page_age_days(abs_path) {
+        Some(days) => compute_freshness(&decay, days, default_review_days),
+        None => FreshnessLevel::Fresh,
     }
 }
 
