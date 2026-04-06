@@ -3,6 +3,7 @@ use std::process::Command;
 
 /// Get the age in days of a file based on its last git commit.
 /// Returns None if not in a git repo or file has no git history.
+#[tracing::instrument]
 pub fn page_age_days(path: &Path) -> Option<i64> {
     let output = Command::new("git")
         .args([
@@ -17,6 +18,7 @@ pub fn page_age_days(path: &Path) -> Option<i64> {
         .ok()?;
 
     if !output.status.success() {
+        tracing::debug!(path = %path.display(), "git log returned non-zero");
         return None;
     }
 
@@ -47,6 +49,7 @@ pub fn page_age_days(path: &Path) -> Option<i64> {
         .ok()?;
 
     if !git_ts.status.success() {
+        tracing::debug!(path = %path.display(), "git log timestamp returned non-zero");
         return None;
     }
 
@@ -76,6 +79,7 @@ impl std::fmt::Display for FreshnessLevel {
 /// - fast: stale after 30 days
 /// - normal: stale after `default_days` (usually 90)
 /// - evergreen: never stale by time
+#[tracing::instrument]
 pub fn compute_freshness(decay: &str, age_days: i64, default_days: u32) -> FreshnessLevel {
     let threshold = match decay {
         "fast" => 30,

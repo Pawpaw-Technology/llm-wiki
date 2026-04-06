@@ -2,6 +2,7 @@ mod ingest;
 mod init;
 mod output;
 mod query;
+mod status;
 
 use clap::Parser;
 use output::Format;
@@ -76,6 +77,16 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
+
+    /// Show wiki health status and freshness report
+    #[command(
+        after_help = "Examples:\n  lw status\n  lw status --format json"
+    )]
+    Status {
+        /// Output format
+        #[arg(short, long, default_value = "human")]
+        format: Format,
+    },
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -92,6 +103,11 @@ fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -133,6 +149,13 @@ fn main() {
                 &raw_type,
                 yes,
             ),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Status { format } => match resolve_root(cli.root) {
+            Ok(root) => status::run(&root, &format),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
