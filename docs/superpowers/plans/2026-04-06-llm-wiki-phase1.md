@@ -25,6 +25,7 @@
 | `crates/lw-core/src/link.rs`   | Parse `[[wiki-links]]` from body, resolve to paths, detect broken links |
 | `crates/lw-core/src/search.rs` | `Searcher` trait + `TantivySearcher` impl                               |
 | `crates/lw-core/src/llm.rs`    | `LlmBackend` trait + `NoopLlm` fallback                                 |
+| `crates/lw-core/src/git.rs`    | Get last modified date from git log                                     |
 | `crates/lw-core/src/ingest.rs` | Ingest pipeline: raw copy + optional LLM draft + page write             |
 | `crates/lw-core/Cargo.toml`    | Dependencies                                                            |
 
@@ -42,10 +43,10 @@
 
 ### lw-mcp (library)
 
-| File                       | Responsibility                                    |
-| -------------------------- | ------------------------------------------------- |
-| `crates/lw-mcp/src/lib.rs` | MCP server struct, tool definitions, handler impl |
-| `crates/lw-mcp/Cargo.toml` | Dependencies                                      |
+| File                       | Responsibility                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `crates/lw-mcp/src/lib.rs` | MCP server struct, tool definitions (wiki_query/read/browse/write/ingest/lint/tags), handler impl |
+| `crates/lw-mcp/Cargo.toml` | Dependencies                                                                                      |
 
 ### Tests
 
@@ -138,6 +139,7 @@ regex = "1"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true }
 ```
 
 - [ ] **Step 3: Create lw-core/src/error.rs**
@@ -259,7 +261,7 @@ tracing = { workspace = true }
 ```rust
 // crates/lw-mcp/src/lib.rs
 //! MCP server for LLM Wiki.
-//! Provides wiki_query, wiki_read, wiki_list, wiki_write, wiki_ingest, wiki_lint tools.
+//! Provides wiki_query, wiki_read, wiki_browse, wiki_write, wiki_ingest, wiki_lint, wiki_tags tools.
 ```
 
 - [ ] **Step 7: Create .gitignore and placeholder**
@@ -681,7 +683,7 @@ git commit -m "feat(core): add WikiSchema parsing with category decay defaults"
 
 ```rust
 // crates/lw-core/tests/fs_test.rs
-use lw_core::fs::{read_page, write_page, list_pages, init_wiki};
+use lw_core::fs::{read_page, write_page, list_pages, init_wiki, discover_wiki_root};
 use lw_core::page::Page;
 use lw_core::schema::WikiSchema;
 use tempfile::TempDir;
@@ -763,6 +765,30 @@ fn list_pages_finds_markdown() {
 fn read_nonexistent_page_errors() {
     let result = read_page(std::path::Path::new("/nonexistent/page.md"));
     assert!(result.is_err());
+}
+
+#[test]
+fn discover_wiki_root_from_subdir() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let schema = WikiSchema::default();
+    init_wiki(root, &schema).unwrap();
+
+    // Starting from a deeply nested wiki subdirectory
+    let deep = root.join("wiki/architecture");
+    let found = discover_wiki_root(&deep);
+    assert_eq!(found, Some(root.to_path_buf()));
+
+    // Starting from a file path within the wiki
+    let file_path = root.join("wiki/architecture/transformer.md");
+    std::fs::write(&file_path, "---\ntitle: T\n---\n").unwrap();
+    let found = discover_wiki_root(&file_path);
+    assert_eq!(found, Some(root.to_path_buf()));
+
+    // Starting from outside any wiki
+    let outside = TempDir::new().unwrap();
+    let found = discover_wiki_root(outside.path());
+    assert!(found.is_none());
 }
 ```
 
@@ -866,6 +892,24 @@ pub fn category_from_path(rel_path: &Path) -> Option<String> {
         .and_then(|p| p.file_name())
         .map(|s| s.to_string_lossy().to_string())
 }
+
+/// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).
+/// Similar to how git finds `.git/`.
+pub fn discover_wiki_root(start: &Path) -> Option<PathBuf> {
+    let mut current = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if current.join(".lw/schema.toml").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
 ```
 
 - [ ] **Step 4: Update lib.rs**
@@ -880,16 +924,52 @@ pub mod schema;
 pub use error::{Result, WikiError};
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Implement git.rs**
+
+```rust
+// crates/lw-core/src/git.rs
+use std::path::Path;
+use std::process::Command;
+
+/// Get the age of a page in days from `git log`.
+/// Shells out to `git log --follow -1 --format=%aI -- <path>`, parses the ISO date,
+/// and computes days since. Returns `None` if not a git repo or the file has no history.
+pub fn page_age_days(path: &Path) -> Option<i64> {
+    let output = Command::new("git")
+        .args(["log", "--follow", "-1", "--format=%aI", "--"])
+        .arg(path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let date_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if date_str.is_empty() {
+        return None;
+    }
+
+    // Parse ISO 8601 date and compute days since
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&date_str).ok()?;
+    let now = chrono::Utc::now();
+    let duration = now.signed_duration_since(timestamp);
+    Some(duration.num_days())
+}
+```
+
+> **Note:** Add `chrono = "0.4"` to lw-core's `Cargo.toml` dependencies for date parsing.
+
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: `cargo test -p lw-core --test fs_test`
-Expected: All 4 tests PASS
+Expected: All 5 tests PASS (including discover_wiki_root test)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add crates/lw-core/src/fs.rs crates/lw-core/src/lib.rs crates/lw-core/tests/fs_test.rs
-git commit -m "feat(core): add filesystem ops — init_wiki, read/write/list pages"
+git add crates/lw-core/src/fs.rs crates/lw-core/src/git.rs crates/lw-core/src/lib.rs crates/lw-core/tests/fs_test.rs
+git commit -m "feat(core): add filesystem ops, git age helper, wiki root discovery"
 ```
 
 ---
@@ -1414,19 +1494,22 @@ impl Searcher for TantivySearcher {
             .next()
             .unwrap_or("_uncategorized")
             .to_string();
-        let tags_joined = page.tags.join(" ");
 
         let mut writer = self.writer.lock().unwrap();
         // Delete existing doc with same path first
         let path_term = tantivy::Term::from_field_text(self.f_path, rel_path);
         writer.delete_term(path_term);
-        writer.add_document(doc!(
-            self.f_path => rel_path,
-            self.f_title => page.title.as_str(),
-            self.f_body => page.body.as_str(),
-            self.f_tags => tags_joined.as_str(),
-            self.f_category => category.as_str(),
-        ))?;
+
+        // Build document with multi-value tags (each tag as separate field value)
+        let mut doc = TantivyDocument::new();
+        doc.add_text(self.f_path, rel_path);
+        doc.add_text(self.f_title, &page.title);
+        doc.add_text(self.f_body, &page.body);
+        for tag in &page.tags {
+            doc.add_text(self.f_tags, tag);
+        }
+        doc.add_text(self.f_category, &category);
+        writer.add_document(doc)?;
         Ok(())
     }
 
@@ -1488,12 +1571,9 @@ impl Searcher for TantivySearcher {
             let doc: TantivyDocument = searcher.doc(doc_addr)?;
             let path = doc.get_first(self.f_path).and_then(|v| v.as_str()).unwrap_or("").to_string();
             let title = doc.get_first(self.f_title).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let tags_str = doc.get_first(self.f_tags).and_then(|v| v.as_str()).unwrap_or("");
-            let tags: Vec<String> = if tags_str.is_empty() {
-                vec![]
-            } else {
-                tags_str.split_whitespace().map(|s| s.to_string()).collect()
-            };
+            let tags: Vec<String> = doc.get_all(self.f_tags)
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
             let category = doc.get_first(self.f_category).and_then(|v| v.as_str()).unwrap_or("").to_string();
             let snippet = snippet_gen.snippet_from_doc(&doc).to_html();
 
@@ -1580,15 +1660,15 @@ fn noop_llm_is_unavailable() {
     assert!(!llm.available());
 }
 
-#[test]
-fn noop_llm_returns_error() {
+#[tokio::test]
+async fn noop_llm_returns_error() {
     let llm = NoopLlm;
     let req = CompletionRequest {
         system: None,
         prompt: "Summarize this paper.".to_string(),
         max_tokens: None,
     };
-    let result = llm.complete(&req);
+    let result = llm.complete(&req).await;
     assert!(result.is_err());
 }
 ```
@@ -1620,9 +1700,11 @@ pub struct CompletionResponse {
 
 /// LLM abstraction — the core decoupling point between tool layer and intelligence.
 /// Implementations: Claude API, OpenAI, Kimi, local ollama, subprocess.
+///
+/// Note: Rust edition 2024 supports native async traits, no need for async_trait crate.
 pub trait LlmBackend: Send + Sync {
     /// Generate a completion. Returns Err if the backend is unavailable or fails.
-    fn complete(&self, req: &CompletionRequest) -> Result<CompletionResponse>;
+    async fn complete(&self, req: &CompletionRequest) -> Result<CompletionResponse>;
 
     /// Health check. Returns false if the LLM is not configured or unreachable.
     /// Tools should gracefully degrade when this returns false.
@@ -1633,7 +1715,7 @@ pub trait LlmBackend: Send + Sync {
 pub struct NoopLlm;
 
 impl LlmBackend for NoopLlm {
-    fn complete(&self, _req: &CompletionRequest) -> Result<CompletionResponse> {
+    async fn complete(&self, _req: &CompletionRequest) -> Result<CompletionResponse> {
         Err(WikiError::LlmUnavailable)
     }
 
@@ -1692,8 +1774,8 @@ use lw_core::schema::WikiSchema;
 use tempfile::TempDir;
 use std::path::Path;
 
-#[test]
-fn ingest_copies_to_raw() {
+#[tokio::test]
+async fn ingest_copies_to_raw() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
     let schema = WikiSchema::default();
@@ -1705,7 +1787,7 @@ fn ingest_copies_to_raw() {
     std::fs::write(&source, "# My Paper\n\nContent here.").unwrap();
 
     let llm = NoopLlm;
-    let result = ingest_source(root, &source, "papers", &llm).unwrap();
+    let result = ingest_source(root, &source, "papers", &llm).await.unwrap();
 
     assert!(result.raw_path.exists());
     assert!(result.raw_path.starts_with(root.join("raw/papers")));
@@ -1713,13 +1795,13 @@ fn ingest_copies_to_raw() {
     assert!(result.draft.is_none());
 }
 
-#[test]
-fn ingest_with_mock_llm_generates_draft() {
+#[tokio::test]
+async fn ingest_with_mock_llm_generates_draft() {
     use lw_core::llm::{LlmBackend, CompletionRequest, CompletionResponse};
 
     struct MockLlm;
     impl LlmBackend for MockLlm {
-        fn complete(&self, _req: &CompletionRequest) -> lw_core::Result<CompletionResponse> {
+        async fn complete(&self, _req: &CompletionRequest) -> lw_core::Result<CompletionResponse> {
             Ok(CompletionResponse {
                 text: r#"---
 title: My Paper
@@ -1746,7 +1828,7 @@ Summary of the paper content."#
     std::fs::write(&source, "# My Paper\n\nSome content.").unwrap();
 
     let llm = MockLlm;
-    let result = ingest_source(root, &source, "papers", &llm).unwrap();
+    let result = ingest_source(root, &source, "papers", &llm).await.unwrap();
 
     assert!(result.draft.is_some());
     let draft = result.draft.unwrap();
@@ -1783,7 +1865,7 @@ pub struct IngestResult {
 /// - `source`: path to the source file (will be copied)
 /// - `raw_subdir`: subdirectory under raw/ (e.g. "papers", "articles")
 /// - `llm`: LLM backend for draft generation (NoopLlm if unavailable)
-pub fn ingest_source(
+pub async fn ingest_source(
     wiki_root: &Path,
     source: &Path,
     raw_subdir: &str,
@@ -1821,7 +1903,7 @@ pub fn ingest_source(
             max_tokens: Some(2000),
         };
 
-        match llm.complete(&req) {
+        match llm.complete(&req).await {
             Ok(resp) => Page::parse(&resp.text).ok(),
             Err(_) => None,
         }
@@ -1839,6 +1921,7 @@ pub fn ingest_source(
 // crates/lw-core/src/lib.rs
 pub mod error;
 pub mod fs;
+pub mod git;
 pub mod ingest;
 pub mod link;
 pub mod llm;
@@ -2215,7 +2298,7 @@ use lw_core::page::Page;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
-pub fn run(
+pub async fn run(
     root: &Path,
     source: &Path,
     title: &Option<String>,
@@ -2226,7 +2309,7 @@ pub fn run(
 
     // For Phase 1: NoopLlm. Real LLM backends come from config.
     let llm = NoopLlm;
-    let result = ingest_source(root, source, raw_subdir, &llm)?;
+    let result = ingest_source(root, source, raw_subdir, &llm).await?;
     println!("Saved to {}", result.raw_path.display());
 
     // If LLM generated a draft, present it for approval
@@ -2451,6 +2534,7 @@ git commit -m "feat(cli): add lw ingest command with interactive approval"
 use lw_core::fs::{self, load_schema, read_page, write_page, list_pages};
 use lw_core::page::Page;
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
+use lw_core::tag::Taxonomy;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
@@ -2481,13 +2565,20 @@ pub struct WikiReadArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct WikiListArgs {
+pub struct WikiBrowseArgs {
     /// Filter by category
     #[serde(default)]
     pub category: Option<String>,
     /// Filter by tag
     #[serde(default)]
     pub tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WikiTagsArgs {
+    /// Filter by category (omit to get tags across all categories)
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2530,14 +2621,20 @@ pub struct WikiLintArgs {
 #[derive(Clone)]
 pub struct WikiMcpServer {
     wiki_root: PathBuf,
+    searcher: Arc<TantivySearcher>,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl WikiMcpServer {
     pub fn new(wiki_root: PathBuf) -> Self {
+        let index_dir = wiki_root.join(".lw/search");
+        let searcher = Arc::new(TantivySearcher::new(&index_dir).expect("failed to create search index"));
+        let wiki_dir = wiki_root.join("wiki");
+        searcher.rebuild(&wiki_dir).expect("failed to build initial index");
         Self {
             wiki_root,
+            searcher,
             tool_router: Self::tool_router(),
         }
     }
@@ -2547,13 +2644,6 @@ impl WikiMcpServer {
         &self,
         Parameters(args): Parameters<WikiQueryArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let index_dir = self.wiki_root.join(".lw/search");
-        let searcher = TantivySearcher::new(&index_dir)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let wiki_dir = self.wiki_root.join("wiki");
-        searcher.rebuild(&wiki_dir)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
         let tags = args.tags
             .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
             .unwrap_or_default();
@@ -2565,7 +2655,7 @@ impl WikiMcpServer {
             limit: args.limit.unwrap_or(20),
         };
 
-        let results = searcher.search(&query)
+        let results = self.searcher.search(&query)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let json = serde_json::json!({
@@ -2595,10 +2685,10 @@ impl WikiMcpServer {
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    #[tool(name = "wiki_list", description = "List wiki pages, optionally filtered by category or tag.")]
-    async fn wiki_list(
+    #[tool(name = "wiki_browse", description = "List wiki pages, optionally filtered by category or tag.")]
+    async fn wiki_browse(
         &self,
-        Parameters(args): Parameters<WikiListArgs>,
+        Parameters(args): Parameters<WikiBrowseArgs>,
     ) -> Result<CallToolResult, McpError> {
         let wiki_dir = self.wiki_root.join("wiki");
         let pages = list_pages(&wiki_dir)
@@ -2641,6 +2731,43 @@ impl WikiMcpServer {
         )]))
     }
 
+    #[tool(name = "wiki_tags", description = "List all tags with usage counts. Returns tags sorted by frequency.")]
+    async fn wiki_tags(
+        &self,
+        Parameters(args): Parameters<WikiTagsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let wiki_dir = self.wiki_root.join("wiki");
+        let page_paths = list_pages(&wiki_dir)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        let mut pages = Vec::new();
+        for rel_path in &page_paths {
+            let abs_path = wiki_dir.join(rel_path);
+            if let Ok(page) = read_page(&abs_path) {
+                if let Some(ref filter_cat) = args.category {
+                    let cat = lw_core::fs::category_from_path(rel_path)
+                        .unwrap_or_else(|| "_uncategorized".to_string());
+                    if &cat != filter_cat { continue; }
+                }
+                pages.push(page);
+            }
+        }
+
+        let taxonomy = lw_core::tag::Taxonomy::from_pages(&pages);
+        let counts = taxonomy.tag_counts();
+
+        let json = serde_json::json!({
+            "total_tags": counts.len(),
+            "tags": counts.iter().map(|(tag, count)| serde_json::json!({
+                "tag": tag,
+                "count": count,
+            })).collect::<Vec<_>>()
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json).unwrap(),
+        )]))
+    }
+
     #[tool(name = "wiki_write", description = "Write or update a wiki page. Content must include YAML frontmatter.")]
     async fn wiki_write(
         &self,
@@ -2651,12 +2778,19 @@ impl WikiMcpServer {
         let path = self.wiki_root.join("wiki").join(&args.path);
         write_page(&path, &page)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        // Incremental index update
+        self.searcher.index_page(&args.path, &page)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        self.searcher.commit()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
         Ok(CallToolResult::success(vec![Content::text(
             format!("Written to wiki/{}", args.path),
         )]))
     }
 
-    #[tool(name = "wiki_ingest", description = "Ingest a source file: copy to raw/ and return metadata. Does NOT auto-generate wiki page in MCP mode — the calling agent decides what to write.")]
+    #[tool(name = "wiki_ingest", description = "Ingest a source file: copy to raw/ and return metadata. After ingesting, use wiki_write to create the corresponding wiki page with frontmatter. This is a two-step process: ingest copies the source, then you write the wiki page.")]
     async fn wiki_ingest(
         &self,
         Parameters(args): Parameters<WikiIngestArgs>,
@@ -2720,12 +2854,8 @@ impl WikiMcpServer {
                     _ => schema.wiki.default_review_days as i64,
                 };
 
-                // Get last modified from file mtime (git log in real usage)
-                let age_days = std::fs::metadata(&abs_path).ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.elapsed().ok())
-                    .map(|d| d.as_secs() as i64 / 86400)
-                    .unwrap_or(0);
+                // Get last modified from git log (authoritative time source)
+                let age_days = lw_core::git::page_age_days(&abs_path).unwrap_or(0);
 
                 let entry = serde_json::json!({
                     "path": rel_path.display().to_string(),
@@ -2766,7 +2896,7 @@ impl ServerHandler for WikiMcpServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::new("lw-mcp", env!("CARGO_PKG_VERSION")),
             instructions: Some(
-                "LLM Wiki MCP server. Provides tools to query, read, list, and write wiki pages."
+                "LLM Wiki MCP server. Provides tools to query, read, browse, write, ingest, lint, and tag wiki pages."
                     .to_string(),
             ),
         }
@@ -2819,9 +2949,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "lw", about = "LLM Wiki — team knowledge base toolkit")]
 struct Cli {
-    /// Wiki root directory (default: current directory)
-    #[arg(long, global = true, default_value = ".")]
-    root: PathBuf,
+    /// Wiki root directory (default: auto-discover from cwd, or LW_WIKI_ROOT env var)
+    #[arg(long, global = true, env = "LW_WIKI_ROOT")]
+    root: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
@@ -2876,24 +3006,43 @@ enum Commands {
     Serve,
 }
 
-fn main() -> anyhow::Result<()> {
+/// Resolve the wiki root: explicit --root flag > LW_WIKI_ROOT env > auto-discover from cwd.
+fn resolve_root(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    if let Some(root) = explicit {
+        return Ok(root);
+    }
+    let cwd = std::env::current_dir()?;
+    lw_core::fs::discover_wiki_root(&cwd)
+        .ok_or_else(|| anyhow::anyhow!(
+            "Not inside a wiki. Use --root, set LW_WIKI_ROOT, or run from within a wiki directory."
+        ))
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // For init, default to cwd if no root specified
+    let root = if matches!(cli.command, Commands::Init) {
+        cli.root.unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        resolve_root(cli.root)?
+    };
     match cli.command {
-        Commands::Init => init::run(&cli.root),
+        Commands::Init => init::run(&root),
         Commands::Query {
             text,
             tag,
             category,
             limit,
             format,
-        } => query::run(&cli.root, &text, &tag, &category, limit, &format),
+        } => query::run(&root, &text, &tag, &category, limit, &format),
         Commands::Ingest {
             source,
             title,
             category,
             raw_type,
-        } => ingest::run(&cli.root, &source, &title, &category, &raw_type),
-        Commands::Serve => serve::run(&cli.root),
+        } => ingest::run(&root, &source, &title, &category, &raw_type).await,
+        Commands::Serve => serve::run(&root),
     }
 }
 ```
@@ -2921,7 +3070,7 @@ Expected: JSON response containing `"serverInfo":{"name":"lw-mcp",...}`
 
 ```bash
 git add crates/lw-mcp/src/lib.rs crates/lw-cli/src/serve.rs crates/lw-cli/src/main.rs
-git commit -m "feat(mcp): add MCP server with wiki_query, wiki_read, wiki_list, wiki_write tools"
+git commit -m "feat(mcp): add MCP server with wiki_query, wiki_read, wiki_browse, wiki_write, wiki_tags tools"
 ```
 
 ---
