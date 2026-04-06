@@ -1,5 +1,5 @@
 use crate::output::Format;
-use lw_core::fs::{load_schema, write_page};
+use lw_core::fs::{load_schema, validate_wiki_path, write_page};
 use lw_core::import::parse_twitter_json;
 use serde::Serialize;
 use std::path::Path;
@@ -39,6 +39,9 @@ pub fn run(
     }
 
     let content = std::fs::read_to_string(file)?;
+
+    // Validate category early to reject path traversal before any I/O
+    validate_wiki_path(root, &format!("{}/probe.md", category))?;
 
     let pages = match format {
         "twitter-json" => parse_twitter_json(&content, limit)?,
@@ -84,11 +87,11 @@ pub fn run(
     let mut created = 0;
     let mut page_infos = Vec::new();
     for p in &pages {
-        let rel_path = format!("wiki/{}/{}.md", category, p.slug);
-        let page_path = root.join(&rel_path);
+        let rel_path = format!("{}/{}.md", category, p.slug);
+        let page_path = validate_wiki_path(root, &rel_path)?;
         write_page(&page_path, &p.page)?;
         page_infos.push(ImportedPageInfo {
-            path: rel_path,
+            path: format!("wiki/{}", rel_path),
             title: p.title.clone(),
             source_id: p.source_id.clone(),
         });
