@@ -1,3 +1,4 @@
+use lw_core::page::Page;
 use lw_core::search::SearchHit;
 use serde::Serialize;
 
@@ -77,6 +78,49 @@ pub fn print_query_results(query: &str, hits: &[SearchHit], total: usize, format
             for hit in hits {
                 println!("{}\t{}\t[{}]", hit.path, hit.title, hit.tags.join(","));
             }
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct PageEnvelope {
+    path: String,
+    title: String,
+    tags: Vec<String>,
+    decay: Option<String>,
+    sources: Vec<String>,
+    body: String,
+}
+
+pub fn print_page(path: &str, page: &Page, format: &Format) {
+    match format {
+        Format::Human => {
+            println!("# {}", page.title);
+            if !page.tags.is_empty() {
+                println!("Tags: {}", page.tags.join(", "));
+            }
+            if let Some(decay) = &page.decay {
+                println!("Decay: {decay}");
+            }
+            if !page.sources.is_empty() {
+                println!("Sources: {}", page.sources.join(", "));
+            }
+            println!();
+            print!("{}", page.body);
+        }
+        Format::Json => {
+            let envelope = PageEnvelope {
+                path: path.to_string(),
+                title: page.title.clone(),
+                tags: page.tags.clone(),
+                decay: page.decay.clone(),
+                sources: page.sources.clone(),
+                body: page.body.clone(),
+            };
+            println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+        }
+        Format::Brief => {
+            println!("{}\t{}\t[{}]", path, page.title, page.tags.join(","));
         }
     }
 }
