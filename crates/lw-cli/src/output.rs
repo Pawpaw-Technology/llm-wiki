@@ -92,8 +92,7 @@ pub fn print_query_results_with_freshness(
                 let fresh = freshness_suffix(enriched.freshness);
                 println!("  {}. wiki/{}{}{}", i + 1, hit.path, tags, fresh);
                 if !hit.snippet.is_empty() {
-                    let clean = hit.snippet.replace("<b>", "").replace("</b>", "");
-                    println!("     {}", clean.trim());
+                    println!("     {}", hit.snippet.trim());
                 }
             }
             println!("\n  {} result(s)", total);

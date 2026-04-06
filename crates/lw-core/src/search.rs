@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
+    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
@@ -254,7 +254,9 @@ impl Searcher for TantivySearcher {
             let snippet_text = if snippet.is_empty() {
                 String::new()
             } else {
-                snippet.to_html()
+                // Strip Tantivy's HTML highlight tags so consumers (MCP, CLI)
+                // receive plain text.  See GitHub issue #25.
+                snippet.to_html().replace("<b>", "").replace("</b>", "")
             };
 
             hits.push(SearchHit {
