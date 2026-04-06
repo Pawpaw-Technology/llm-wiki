@@ -191,10 +191,10 @@ impl WikiMcpServer {
                     let cat = category_from_path(rel_path).unwrap_or_default();
 
                     // Category filter
-                    if let Some(ref filter_cat) = args.category {
-                        if cat != *filter_cat {
-                            continue;
-                        }
+                    if let Some(ref filter_cat) = args.category
+                        && cat != *filter_cat
+                    {
+                        continue;
                     }
 
                     let abs_path = wiki_dir.join(rel_path);
@@ -204,10 +204,10 @@ impl WikiMcpServer {
                     };
 
                     // Tag filter
-                    if let Some(ref filter_tag) = args.tag {
-                        if !page.tags.iter().any(|t| t == filter_tag) {
-                            continue;
-                        }
+                    if let Some(ref filter_tag) = args.tag
+                        && !page.tags.iter().any(|t| t == filter_tag)
+                    {
+                        continue;
                     }
 
                     // Stale filter
@@ -369,10 +369,10 @@ impl WikiMcpServer {
                 for rel_path in &page_paths {
                     let cat = category_from_path(rel_path).unwrap_or_default();
 
-                    if let Some(ref filter_cat) = args.category {
-                        if cat != *filter_cat {
-                            continue;
-                        }
+                    if let Some(ref filter_cat) = args.category
+                        && cat != *filter_cat
+                    {
+                        continue;
                     }
 
                     let abs_path = wiki_dir.join(rel_path);
@@ -446,10 +446,10 @@ impl WikiMcpServer {
 
         let searcher = TantivySearcher::new(&index_dir)?;
         let wiki_dir = wiki_root.join("wiki");
-        if wiki_dir.exists() {
-            if let Err(e) = searcher.rebuild(&wiki_dir) {
-                tracing::warn!("Failed to rebuild search index: {}", e);
-            }
+        if wiki_dir.exists()
+            && let Err(e) = searcher.rebuild(&wiki_dir)
+        {
+            tracing::warn!("Failed to rebuild search index: {}", e);
         }
 
         let searcher = Arc::new(searcher);
