@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lw-core",
+    "crates/lw-cli",
+    "crates/lw-mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+lw-core = { path = "crates/lw-core" }
+lw-mcp = { path = "crates/lw-mcp" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

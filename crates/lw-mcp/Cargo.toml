@@ -1,0 +1,12 @@
+[package]
+name = "lw-mcp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lw-core = { workspace = true }
+rmcp = { version = "1.3", features = ["server"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
