@@ -29,7 +29,7 @@ fn index_and_search() {
     searcher.commit().unwrap();
 
     let query = SearchQuery {
-        text: "attention".into(),
+        text: Some("attention".into()),
         tags: vec![],
         category: None,
         limit: 10,
@@ -50,7 +50,7 @@ fn search_filters_by_tag() {
     searcher.commit().unwrap();
 
     let query = SearchQuery {
-        text: "deep learning".into(),
+        text: Some("deep learning".into()),
         tags: vec!["ml".into()],
         category: None,
         limit: 10,
@@ -70,7 +70,7 @@ fn search_multi_tag_page() {
     searcher.commit().unwrap();
 
     let q1 = SearchQuery {
-        text: "content".into(),
+        text: Some("content".into()),
         tags: vec!["ml".into()],
         category: None,
         limit: 10,
@@ -78,7 +78,7 @@ fn search_multi_tag_page() {
     assert_eq!(searcher.search(&q1).unwrap().total, 1);
 
     let q2 = SearchQuery {
-        text: "content".into(),
+        text: Some("content".into()),
         tags: vec!["optimization".into()],
         category: None,
         limit: 10,
@@ -86,7 +86,7 @@ fn search_multi_tag_page() {
     assert_eq!(searcher.search(&q2).unwrap().total, 1);
 
     let q3 = SearchQuery {
-        text: "content".into(),
+        text: Some("content".into()),
         tags: vec!["nonexistent".into()],
         category: None,
         limit: 10,
@@ -105,7 +105,7 @@ fn search_filters_by_category() {
     searcher.commit().unwrap();
 
     let query = SearchQuery {
-        text: "attention".into(),
+        text: Some("attention".into()),
         tags: vec![],
         category: Some("training".into()),
         limit: 10,
@@ -127,7 +127,7 @@ fn remove_page_from_index() {
     searcher.commit().unwrap();
 
     let query = SearchQuery {
-        text: "removed".into(),
+        text: Some("removed".into()),
         tags: vec![],
         category: None,
         limit: 10,
@@ -156,7 +156,7 @@ fn search_chinese_text() {
 
     // Search Chinese
     let q = SearchQuery {
-        text: "创业".into(),
+        text: Some("创业".into()),
         tags: vec![],
         category: None,
         limit: 10,
@@ -232,7 +232,7 @@ fn search_mixed_chinese_english() {
 
     // English term in mixed content
     let q1 = SearchQuery {
-        text: "Claude".into(),
+        text: Some("Claude".into()),
         tags: vec![],
         category: None,
         limit: 10,
@@ -241,7 +241,7 @@ fn search_mixed_chinese_english() {
 
     // Chinese term in mixed content
     let q2 = SearchQuery {
-        text: "开发".into(),
+        text: Some("开发".into()),
         tags: vec![],
         category: None,
         limit: 10,

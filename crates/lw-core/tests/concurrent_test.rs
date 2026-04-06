@@ -80,7 +80,7 @@ fn parallel_search_indexes() {
 
                 let results = searcher
                     .search(&SearchQuery {
-                        text: "attention".into(),
+                        text: Some("attention".into()),
                         tags: vec![],
                         category: None,
                         limit: 10,
@@ -95,7 +95,7 @@ fn parallel_search_indexes() {
                 // Tag-filtered search
                 let filtered = searcher
                     .search(&SearchQuery {
-                        text: "training".into(),
+                        text: Some("training".into()),
                         tags: vec!["training".into()],
                         category: None,
                         limit: 10,
@@ -263,7 +263,7 @@ fn shared_searcher_across_threads() {
             thread::spawn(move || {
                 let results = s
                     .search(&SearchQuery {
-                        text: "attention".into(),
+                        text: Some("attention".into()),
                         tags: vec![],
                         category: None,
                         limit: 10,
