@@ -18,6 +18,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = "3"
+ureq = "3"
 
 [dev-dependencies]
 assert_cmd = "2"

@@ -59,11 +59,11 @@ enum Commands {
 
     /// Ingest source material into the wiki
     #[command(
-        after_help = "Examples:\n  lw ingest paper.pdf --category architecture --raw-type papers\n  lw ingest notes.md --title \"Meeting Notes\" --category ops --yes\n  cat article.md | lw ingest --stdin --title \"Article\" --yes"
+        after_help = "Examples:\n  lw ingest paper.pdf --category architecture --raw-type papers\n  lw ingest https://arxiv.org/abs/2405.12345 --category architecture --yes\n  lw ingest notes.md --title \"Meeting Notes\" --category ops --yes\n  cat article.md | lw ingest --stdin --title \"Article\" --yes"
     )]
     Ingest {
-        /// Path to source file (omit if using --stdin)
-        source: Option<PathBuf>,
+        /// Source file path or URL (omit if using --stdin)
+        source: Option<String>,
         /// Read from stdin
         #[arg(long)]
         stdin: bool,
