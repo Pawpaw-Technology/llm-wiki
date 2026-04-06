@@ -84,6 +84,15 @@ pub fn category_from_path(rel_path: &Path) -> Option<String> {
     Some(first.as_os_str().to_string_lossy().to_string())
 }
 
+/// Validate that a relative path is safe to use within the wiki directory.
+/// Returns the absolute path if valid, or a PathTraversal error if the path
+/// attempts to escape the wiki directory.
+#[tracing::instrument]
+pub fn validate_wiki_path(wiki_root: &Path, relative_path: &str) -> Result<PathBuf> {
+    // Stub: always returns Ok for now (tests should fail)
+    Ok(wiki_root.join("wiki").join(relative_path))
+}
+
 /// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).
 /// Similar to how git finds `.git/`.
 #[tracing::instrument]

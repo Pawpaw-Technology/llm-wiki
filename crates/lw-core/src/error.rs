@@ -38,6 +38,9 @@ pub enum WikiError {
     #[error("git error: {0}")]
     Git(String),
 
+    #[error("path traversal attempt: {0}")]
+    PathTraversal(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 }
