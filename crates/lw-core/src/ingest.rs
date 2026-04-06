@@ -3,6 +3,38 @@ use crate::llm::LlmBackend;
 use crate::page::Page;
 use std::path::{Path, PathBuf};
 
+/// Check if a file is likely binary (not UTF-8 text) based on extension.
+fn is_binary(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    matches!(
+        ext.as_str(),
+        "pdf"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "bmp"
+            | "mp4"
+            | "mp3"
+            | "wav"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "bin"
+            | "dat"
+            | "sqlite"
+            | "db"
+    )
+}
+
 pub struct IngestResult {
     pub raw_path: PathBuf,
     pub draft: Option<Page>,
@@ -27,8 +59,8 @@ pub async fn ingest_source<L: LlmBackend>(
     let raw_path = dest_dir.join(filename);
     std::fs::copy(source, &raw_path)?;
 
-    // Try LLM draft generation
-    let draft = if llm.available() {
+    // Try LLM draft generation (skip binary files)
+    let draft = if llm.available() && !is_binary(source) {
         let source_content = std::fs::read_to_string(source).unwrap_or_default();
         let prompt = format!(
             "Read the following source material and generate a wiki page in markdown format.\n\
