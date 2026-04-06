@@ -17,14 +17,14 @@ pub enum WikiError {
     #[error("YAML parse error: {0}")]
     YamlParse(String),
 
+    #[error("JSON parse error: {0}")]
+    JsonParse(String),
+
     #[error("invalid frontmatter in {path}: {reason}")]
     Frontmatter { path: PathBuf, reason: String },
 
     #[error("page not found: {0}")]
     PageNotFound(PathBuf),
-
-    #[error("schema not found: {0}")]
-    SchemaNotFound(PathBuf),
 
     #[error("not a wiki directory: {0} (missing .lw/schema.toml)\n  Run: lw init --root <path>")]
     NotAWiki(PathBuf),

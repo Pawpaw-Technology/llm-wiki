@@ -117,14 +117,8 @@ impl TantivySearcher {
         })
     }
 
-    /// Extract category from a relative path (first path component).
     fn category_from_path(rel_path: &str) -> String {
-        let p = std::path::Path::new(rel_path);
-        p.iter()
-            .next()
-            .filter(|_| p.components().count() > 1)
-            .map(|c| c.to_string_lossy().to_string())
-            .unwrap_or_default()
+        crate::fs::category_from_path(std::path::Path::new(rel_path)).unwrap_or_default()
     }
 }
 

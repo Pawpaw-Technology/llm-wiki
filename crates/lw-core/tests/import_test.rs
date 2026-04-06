@@ -1,4 +1,4 @@
-use lw_core::import::{ImportedPage, parse_twitter_json};
+use lw_core::import::parse_twitter_json;
 
 #[test]
 fn parse_twitter_json_basic() {

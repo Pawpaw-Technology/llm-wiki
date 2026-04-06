@@ -37,13 +37,8 @@ pub fn gather_status(root: &Path) -> crate::Result<WikiStatus> {
     let mut freshness = FreshnessDistribution::default();
 
     for rel_path in &pages {
-        // Category from first path component
-        let cat = rel_path
-            .iter()
-            .next()
-            .filter(|_| rel_path.components().count() > 1)
-            .map(|c| c.to_string_lossy().to_string())
-            .unwrap_or_else(|| "_uncategorized".to_string());
+        let cat =
+            crate::fs::category_from_path(rel_path).unwrap_or_else(|| "_uncategorized".to_string());
         *cat_counts.entry(cat).or_default() += 1;
 
         // Freshness

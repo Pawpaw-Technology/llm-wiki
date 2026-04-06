@@ -11,12 +11,14 @@ pub fn run(
     limit: usize,
     format: &Format,
 ) -> anyhow::Result<()> {
-    let _schema = load_schema(root)?;
+    // Validate wiki exists (produces actionable error message)
+    load_schema(root)?;
     let index_dir = root.join(".lw/search");
     std::fs::create_dir_all(&index_dir)?;
     let searcher = TantivySearcher::new(&index_dir)?;
 
-    // Rebuild index (Phase 2: incremental)
+    // CLI rebuilds on every query. The MCP server (lw serve) holds a persistent
+    // index with incremental updates — use that for repeated queries.
     let wiki_dir = root.join("wiki");
     searcher.rebuild(&wiki_dir)?;
 
