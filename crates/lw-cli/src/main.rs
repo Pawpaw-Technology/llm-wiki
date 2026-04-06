@@ -79,9 +79,7 @@ enum Commands {
     },
 
     /// Show wiki health status and freshness report
-    #[command(
-        after_help = "Examples:\n  lw status\n  lw status --format json"
-    )]
+    #[command(after_help = "Examples:\n  lw status\n  lw status --format json")]
     Status {
         /// Output format
         #[arg(short, long, default_value = "human")]

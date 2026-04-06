@@ -3,8 +3,7 @@ use std::path::PathBuf;
 
 #[test]
 fn extract_links_from_body() {
-    let body =
-        "See [[transformer]] for details. Also related: [[scaling-laws]] and [[attention-mechanism]].";
+    let body = "See [[transformer]] for details. Also related: [[scaling-laws]] and [[attention-mechanism]].";
     let links = extract_wiki_links(body);
     assert_eq!(
         links,

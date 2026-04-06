@@ -1,0 +1,7 @@
+target/
+.git/
+.worktrees/
+.DS_Store
+docs/
+*.md
+!README.md

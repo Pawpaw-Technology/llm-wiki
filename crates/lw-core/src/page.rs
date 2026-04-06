@@ -1,5 +1,5 @@
 use crate::{Result, WikiError};
-use gray_matter::{engine::YAML, Matter, ParsedEntity};
+use gray_matter::{Matter, ParsedEntity, engine::YAML};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

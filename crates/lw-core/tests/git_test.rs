@@ -1,4 +1,4 @@
-use lw_core::git::{compute_freshness, FreshnessLevel};
+use lw_core::git::{FreshnessLevel, compute_freshness};
 
 #[test]
 fn fast_decay_stale_after_30() {

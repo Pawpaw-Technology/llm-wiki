@@ -5,6 +5,7 @@ use lw_core::page::Page;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     root: &Path,
     source: Option<&Path>,

@@ -1,5 +1,5 @@
 use crate::fs::{list_pages, load_schema, read_page};
-use crate::git::{compute_freshness, page_age_days, FreshnessLevel};
+use crate::git::{FreshnessLevel, compute_freshness, page_age_days};
 use std::collections::HashMap;
 use std::path::Path;
 
