@@ -171,6 +171,49 @@ fn search_chinese_text() {
 }
 
 #[test]
+fn search_tag_only_no_text() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+    let (p1, page1) = make_page("A", &["ml"], "Machine learning basics.");
+    let (p2, page2) = make_page("B", &["infra"], "Infrastructure setup.");
+    searcher.index_page(&p1, &page1).unwrap();
+    searcher.index_page(&p2, &page2).unwrap();
+    searcher.commit().unwrap();
+
+    // Tag-only query with no text
+    let query = SearchQuery {
+        text: None,
+        tags: vec!["ml".into()],
+        category: None,
+        limit: 10,
+    };
+    let results = searcher.search(&query).unwrap();
+    assert_eq!(results.total, 1);
+    assert_eq!(results.hits[0].title, "A");
+}
+
+#[test]
+fn search_category_only_no_text() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+    let (p1, page1) = make_page("A", &[], "Content A.");
+    let (_, page2) = make_page("B", &[], "Content B.");
+    searcher.index_page(&p1, &page1).unwrap();
+    searcher.index_page("training/b.md", &page2).unwrap();
+    searcher.commit().unwrap();
+
+    let query = SearchQuery {
+        text: None,
+        tags: vec![],
+        category: Some("training".into()),
+        limit: 10,
+    };
+    let results = searcher.search(&query).unwrap();
+    assert_eq!(results.total, 1);
+    assert_eq!(results.hits[0].title, "B");
+}
+
+#[test]
 fn search_mixed_chinese_english() {
     let tmp = TempDir::new().unwrap();
     let searcher = TantivySearcher::new(tmp.path()).unwrap();
