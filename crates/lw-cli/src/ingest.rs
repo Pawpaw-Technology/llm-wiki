@@ -34,44 +34,13 @@ pub fn run(
     // Track URL origin for frontmatter sources
     let mut url_origin: Option<String> = None;
 
-    // Resolve source: URL download, stdin, or local file
-    // Keep temp resources alive so paths remain valid for the duration of this function.
-    let _url_temp_dir;
-    let _url_file_path;
-    let _stdin_temp;
-    let source_path = if stdin_mode {
-        let mut content = String::new();
-        io::stdin().lock().read_to_string(&mut content)?;
-        _stdin_temp = tempfile::NamedTempFile::new()?;
-        std::fs::write(_stdin_temp.path(), &content)?;
-        _stdin_temp.path()
+    // Determine if source is a URL (before resolving) so dry-run can skip download
+    let source_str = if !stdin_mode {
+        source.map(|s| s.to_string())
     } else {
-        let source_str = source.ok_or_else(|| {
-            anyhow::anyhow!(
-                "No source specified.\n  \
-                 Usage: lw ingest <file|url> [--category X] [--yes]\n  \
-                 Or:    cat file | lw ingest --stdin --title \"Title\" --yes"
-            )
-        })?;
-
-        if is_url(source_str) {
-            // Download URL to temp directory with proper filename
-            let (dir, path) = download_url(source_str)?;
-            _url_temp_dir = Some(dir);
-            _url_file_path = path;
-            url_origin = Some(source_str.to_string());
-            _url_file_path.as_path()
-        } else {
-            let p = Path::new(source_str);
-            if !p.exists() {
-                anyhow::bail!(
-                    "Source file not found: {}\n  Usage: lw ingest <file|url> [--raw-type papers]",
-                    p.display()
-                );
-            }
-            p
-        }
+        None
     };
+    let source_is_url = source_str.as_deref().is_some_and(is_url);
 
     // Build page from LLM draft or minimal
     let cat = category
@@ -88,15 +57,20 @@ pub fn run(
         .unwrap_or_default();
 
     if dry_run {
-        // Dry run: compute what would be created without writing anything
+        // Dry run: compute what would be created without writing anything.
+        // For URLs, derive metadata from the URL itself — skip the download entirely.
         let auto_title = title.clone().unwrap_or_else(|| {
-            if let Some(ref url) = url_origin {
-                filename_from_url(url)
-            } else {
-                source_path
+            if source_is_url {
+                filename_from_url(source_str.as_deref().unwrap())
+            } else if stdin_mode {
+                "Untitled".to_string()
+            } else if let Some(ref s) = source_str {
+                Path::new(s)
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| "Untitled".to_string())
+            } else {
+                "Untitled".to_string()
             }
         });
         let slug = slugify(&auto_title);
@@ -122,13 +96,52 @@ pub fn run(
                 println!("category: {}", cat);
                 println!("decay: {}", decay);
                 println!("tags: [{}]", page_tags.join(", "));
-                if let Some(ref url) = url_origin {
-                    println!("source_url: {}", url);
+                if source_is_url {
+                    println!("source_url: {}", source_str.as_deref().unwrap());
                 }
             }
         }
         return Ok(());
     }
+
+    // Resolve source: URL download, stdin, or local file
+    // Keep temp resources alive so paths remain valid for the duration of this function.
+    let _url_temp_dir;
+    let _url_file_path;
+    let _stdin_temp;
+    let source_path = if stdin_mode {
+        let mut content = String::new();
+        io::stdin().lock().read_to_string(&mut content)?;
+        _stdin_temp = tempfile::NamedTempFile::new()?;
+        std::fs::write(_stdin_temp.path(), &content)?;
+        _stdin_temp.path()
+    } else {
+        let source_str = source_str.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "No source specified.\n  \
+                 Usage: lw ingest <file|url> [--category X] [--yes]\n  \
+                 Or:    cat file | lw ingest --stdin --title \"Title\" --yes"
+            )
+        })?;
+
+        if is_url(source_str) {
+            // Download URL to temp directory with proper filename
+            let (dir, path) = download_url(source_str)?;
+            _url_temp_dir = Some(dir);
+            _url_file_path = path;
+            url_origin = Some(source_str.to_string());
+            _url_file_path.as_path()
+        } else {
+            let p = Path::new(source_str);
+            if !p.exists() {
+                anyhow::bail!(
+                    "Source file not found: {}\n  Usage: lw ingest <file|url> [--raw-type papers]",
+                    p.display()
+                );
+            }
+            p
+        }
+    };
 
     // Phase 1: NoopLlm
     let llm = NoopLlm;

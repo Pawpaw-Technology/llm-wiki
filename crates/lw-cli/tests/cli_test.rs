@@ -482,26 +482,37 @@ fn ingest_url_unreachable_gives_error() {
 }
 
 #[test]
-fn ingest_url_dry_run_unreachable_gives_error() {
+fn ingest_url_dry_run_skips_download() {
     let tmp = TempDir::new().unwrap();
     lw().args(["init", "--root", tmp.path().to_str().unwrap()])
         .assert()
         .success();
-    // Even dry-run with a URL should attempt to fetch (to validate the source)
-    // but with an unreachable host, it should fail
-    lw().args([
-        "ingest",
-        "https://this-host-does-not-exist-12345.invalid/paper.pdf",
-        "--root",
-        tmp.path().to_str().unwrap(),
-        "--category",
-        "architecture",
-        "--yes",
-        "--dry-run",
-    ])
-    .assert()
-    .failure()
-    .stderr(predicate::str::contains("download").or(predicate::str::contains("URL")));
+    // dry-run with a URL should NOT attempt to download — it derives
+    // preview metadata from the URL alone, so even an unreachable host succeeds.
+    let output = lw()
+        .args([
+            "ingest",
+            "https://this-host-does-not-exist-12345.invalid/paper.pdf",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--category",
+            "architecture",
+            "--yes",
+            "--dry-run",
+            "-o",
+            "json",
+        ])
+        .output()
+        .expect("failed to run lw");
+    assert!(
+        output.status.success(),
+        "dry-run + URL should succeed without network access"
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("dry-run json output should be valid JSON");
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["title"], "paper.pdf");
+    assert_eq!(json["category"], "architecture");
 }
 
 #[test]

@@ -82,7 +82,7 @@ enum Commands {
         /// Skip interactive prompts (agent mode)
         #[arg(long)]
         yes: bool,
-        /// Preview what would be created without writing files
+        /// Preview what would be created without writing files or downloading URLs
         #[arg(long)]
         dry_run: bool,
         /// Output format (human or json)
