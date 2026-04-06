@@ -1,3 +1,4 @@
+mod import;
 mod ingest;
 mod init;
 mod output;
@@ -79,6 +80,27 @@ enum Commands {
         yes: bool,
     },
 
+    /// Import batch sources into the wiki
+    #[command(
+        after_help = "Examples:\n  lw import tweets.json --format twitter-json\n  lw import tweets.json --format twitter-json --limit 10 --dry-run\n  lw import tweets.json --format twitter-json --category architecture"
+    )]
+    Import {
+        /// Path to source file
+        file: PathBuf,
+        /// Source format (twitter-json)
+        #[arg(long)]
+        format: String,
+        /// Target category
+        #[arg(long, default_value = "_uncategorized")]
+        category: String,
+        /// Max entries to import
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Preview without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Show wiki health status and freshness report
     #[command(after_help = "Examples:\n  lw status\n  lw status --format json")]
     Status {
@@ -152,6 +174,19 @@ fn main() {
                 &raw_type,
                 yes,
             ),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Import {
+            file,
+            format,
+            category,
+            limit,
+            dry_run,
+        } => match resolve_root(cli.root) {
+            Ok(root) => import::run(&root, &file, &format, &category, limit, dry_run),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);

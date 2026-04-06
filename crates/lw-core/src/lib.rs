@@ -1,6 +1,7 @@
 pub mod error;
 pub mod fs;
 pub mod git;
+pub mod import;
 pub mod ingest;
 pub mod link;
 pub mod llm;
