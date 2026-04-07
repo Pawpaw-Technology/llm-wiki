@@ -1,51 +1,15 @@
 use crate::Result;
-use crate::llm::LlmBackend;
-use crate::page::Page;
 use std::path::{Path, PathBuf};
-
-/// Check if a file is likely binary (not UTF-8 text) based on extension.
-fn is_binary(path: &Path) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    matches!(
-        ext.as_str(),
-        "pdf"
-            | "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "bmp"
-            | "mp4"
-            | "mp3"
-            | "wav"
-            | "zip"
-            | "tar"
-            | "gz"
-            | "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "bin"
-            | "dat"
-            | "sqlite"
-            | "db"
-    )
-}
 
 pub struct IngestResult {
     pub raw_path: PathBuf,
-    pub draft: Option<Page>,
 }
 
-#[tracing::instrument(skip(llm))]
-pub async fn ingest_source<L: LlmBackend>(
+#[tracing::instrument]
+pub async fn ingest_source(
     wiki_root: &Path,
     source: &Path,
     raw_subdir: &str,
-    llm: &L,
 ) -> Result<IngestResult> {
     // Copy source to raw/
     let filename = source.file_name().ok_or_else(|| {
@@ -59,36 +23,5 @@ pub async fn ingest_source<L: LlmBackend>(
     let raw_path = dest_dir.join(filename);
     std::fs::copy(source, &raw_path)?;
 
-    // Try LLM draft generation (skip binary files)
-    let draft = if llm.available() && !is_binary(source) {
-        let source_content = std::fs::read_to_string(source).unwrap_or_default();
-        let prompt = format!(
-            "Read the following source material and generate a wiki page in markdown format.\n\
-             The page MUST start with YAML frontmatter containing:\n\
-             - title (required)\n\
-             - tags (list of relevant tags)\n\
-             - decay (fast/normal/evergreen)\n\n\
-             Source:\n{}\n\n\
-             Generate the wiki page:",
-            source_content
-        );
-
-        let req = crate::llm::CompletionRequest {
-            system: Some(
-                "You are a wiki page generator. Output only the markdown page with frontmatter."
-                    .to_string(),
-            ),
-            prompt,
-            max_tokens: Some(2000),
-        };
-
-        match llm.complete(&req).await {
-            Ok(resp) => Page::parse(&resp.text).ok(),
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
-
-    Ok(IngestResult { raw_path, draft })
+    Ok(IngestResult { raw_path })
 }

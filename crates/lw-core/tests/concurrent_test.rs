@@ -133,8 +133,7 @@ async fn parallel_ingest() {
                 &format!("# Paper {i}\n\nContent for parallel ingest test."),
             );
 
-            let llm = lw_core::llm::NoopLlm;
-            let result = lw_core::ingest::ingest_source(wiki.root(), &source, "papers", &llm)
+            let result = lw_core::ingest::ingest_source(wiki.root(), &source, "papers")
                 .await
                 .unwrap();
 

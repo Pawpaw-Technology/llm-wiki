@@ -1,10 +1,9 @@
 use crate::output::Format;
-use lw_core::fs::{load_schema, validate_wiki_path, write_page};
+use lw_core::fs::load_schema;
 use lw_core::ingest::ingest_source;
-use lw_core::llm::NoopLlm;
-use lw_core::page::{Page, slugify};
+use lw_core::page::slugify;
 use serde::Serialize;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, Read};
 use std::path::Path;
 
 #[derive(Serialize)]
@@ -42,7 +41,6 @@ pub fn run(
     };
     let source_is_url = source_str.as_deref().is_some_and(is_url);
 
-    // Build page from LLM draft or minimal
     let cat = category
         .clone()
         .unwrap_or_else(|| "_uncategorized".to_string());
@@ -57,12 +55,10 @@ pub fn run(
         .unwrap_or_default();
 
     // Validate category early to reject path traversal before any I/O
-    validate_wiki_path(root, &format!("{}/probe.md", cat))?;
+    lw_core::fs::validate_wiki_path(root, &format!("{}/probe.md", cat))?;
 
     if dry_run {
         // Dry run: skip download, derive metadata from source alone.
-        // For URLs, use filename_from_url (no file to read H1 from).
-        // For files, derive_title extracts H1 from content.
         let auto_title = if source_is_url {
             title
                 .clone()
@@ -104,7 +100,6 @@ pub fn run(
     }
 
     // Resolve source: URL download, stdin, or local file
-    // Keep temp resources alive so paths remain valid for the duration of this function.
     let _url_temp_dir;
     let _url_file_path;
     let _stdin_temp;
@@ -124,7 +119,6 @@ pub fn run(
         })?;
 
         if is_url(source_str) {
-            // Download URL to temp directory with proper filename
             let (dir, path) = download_url(source_str)?;
             _url_temp_dir = Some(dir);
             _url_file_path = path;
@@ -142,73 +136,37 @@ pub fn run(
         }
     };
 
-    // Phase 1: NoopLlm
-    let llm = NoopLlm;
     let rt = tokio::runtime::Runtime::new()?;
-    let result = rt.block_on(ingest_source(root, source_path, raw_subdir, &llm))?;
+    let result = rt.block_on(ingest_source(root, source_path, raw_subdir))?;
     eprintln!("Saved to {}", result.raw_path.display());
 
-    let draft = if let Some(draft) = result.draft {
-        draft
-    } else {
-        let auto_title = derive_title(title.as_deref(), source_path, url_origin.as_deref());
+    let auto_title = derive_title(title.as_deref(), source_path, url_origin.as_deref());
 
-        // Build sources list: raw path + original URL if applicable
-        let raw_ref = format!(
-            "raw/{}/{}",
-            raw_subdir,
-            result.raw_path.file_name().unwrap().to_string_lossy()
-        );
-        let mut sources = vec![raw_ref];
-        if let Some(ref url) = url_origin {
-            sources.push(url.clone());
-        }
-
-        Page {
-            title: auto_title,
-            tags: page_tags,
-            decay: Some(schema.decay_for_category(&cat).to_string()),
-            sources,
-            author: None,
-            generator: None,
-            related: None,
-            body: format!(
-                "TODO: summarize {}\n",
-                url_origin
-                    .as_deref()
-                    .unwrap_or(&source_path.file_name().unwrap().to_string_lossy())
-            ),
-        }
-    };
-
-    // Present for approval (or auto-approve with --yes)
+    // Present metadata (or auto-approve with --yes)
     if !yes {
         eprintln!();
-        eprintln!("  Title:    {}", draft.title);
-        eprintln!("  Tags:     [{}]", draft.tags.join(", "));
+        eprintln!("  Title:    {}", auto_title);
+        eprintln!("  Tags:     [{}]", page_tags.join(", "));
         eprintln!("  Category: {}", cat);
-        eprintln!("  Decay:    {}", draft.decay.as_deref().unwrap_or("normal"));
+        eprintln!("  Decay:    {}", schema.decay_for_category(&cat));
         if let Some(ref url) = url_origin {
             eprintln!("  Source:   {}", url);
         }
         eprintln!();
-        if !confirm("Create wiki page?", true)? {
-            eprintln!("Skipped.");
-            return Ok(());
-        }
+        eprintln!("  Raw filed. Use a skill command or agent script to create the wiki page.");
     }
 
-    let slug = slugify(&draft.title);
-    let rel_path = format!("{}/{}.md", cat, slug);
-    let page_path = validate_wiki_path(root, &rel_path)?;
-    write_page(&page_path, &draft)?;
-    let rel_path = format!("wiki/{}", rel_path);
+    let raw_ref = format!(
+        "raw/{}/{}",
+        raw_subdir,
+        result.raw_path.file_name().unwrap().to_string_lossy()
+    );
 
     let output = IngestOutput {
-        path: rel_path.clone(),
-        title: draft.title.clone(),
+        path: raw_ref,
+        title: auto_title.clone(),
         category: cat.clone(),
-        decay: draft.decay.clone().unwrap_or_else(|| "normal".to_string()),
+        decay: schema.decay_for_category(&cat).to_string(),
         dry_run: false,
     };
 
@@ -217,8 +175,8 @@ pub fn run(
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
         Format::Human | Format::Brief => {
-            println!("path: {}", rel_path);
-            println!("title: {}", draft.title);
+            println!("path: {}", output.path);
+            println!("title: {}", auto_title);
             println!("category: {}", cat);
         }
     }
@@ -322,20 +280,6 @@ fn download_url(url: &str) -> anyhow::Result<(tempfile::TempDir, std::path::Path
     Ok((dir, file_path))
 }
 
-fn confirm(prompt: &str, default_yes: bool) -> io::Result<bool> {
-    let suffix = if default_yes { "[Y/n]" } else { "[y/N]" };
-    eprint!("  {} {} ", prompt, suffix);
-    io::stderr().flush()?;
-    let mut input = String::new();
-    io::stdin().lock().read_line(&mut input)?;
-    let trimmed = input.trim().to_lowercase();
-    Ok(if trimmed.is_empty() {
-        default_yes
-    } else {
-        trimmed == "y" || trimmed == "yes"
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,7 +323,6 @@ mod tests {
     fn filename_from_url_handles_trailing_slash() {
         let name = filename_from_url("https://arxiv.org/abs/2405.12345/");
         assert!(!name.is_empty());
-        // Should produce something meaningful, not empty
     }
 
     #[test]

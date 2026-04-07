@@ -4,7 +4,6 @@ pub mod git;
 pub mod import;
 pub mod ingest;
 pub mod link;
-pub mod llm;
 pub mod page;
 pub mod schema;
 pub mod search;

@@ -4,7 +4,6 @@
 use lw_core::fs::{category_from_path, list_pages, read_page, validate_wiki_path, write_page};
 use lw_core::git::{self, FreshnessLevel};
 use lw_core::ingest;
-use lw_core::llm::NoopLlm;
 use lw_core::page::Page;
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
 use lw_core::status::gather_status;
@@ -344,15 +343,13 @@ impl WikiMcpServer {
             return serde_json::json!({"error": format!("Source file not found: {}", args.source_path)}).to_string();
         }
 
-        let llm = NoopLlm;
-        match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type, &llm).await {
+        match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type).await {
             Ok(result) => serde_json::json!({
                 "status": "ok",
                 "raw_path": result.raw_path.to_string_lossy(),
                 "suggested_title": args.title,
                 "suggested_tags": args.tags,
                 "suggested_category": args.category,
-                "has_draft": result.draft.is_some(),
                 "next_step": "Use wiki_write to create the wiki page from this source material.",
             })
             .to_string(),

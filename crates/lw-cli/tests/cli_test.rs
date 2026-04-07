@@ -144,7 +144,7 @@ fn ingest_with_yes_flag() {
     ])
     .assert()
     .success()
-    .stdout(predicate::str::contains("path: wiki/architecture/"));
+    .stdout(predicate::str::contains("path: raw/articles/"));
     // Verify raw copy exists
     assert!(tmp.path().join("raw/articles/external.md").exists());
 }
@@ -410,11 +410,8 @@ fn ingest_json_output() {
     assert!(json["title"].as_str().is_some(), "missing title");
     assert_eq!(json["category"], "architecture");
     assert!(
-        json["path"]
-            .as_str()
-            .unwrap()
-            .starts_with("wiki/architecture/"),
-        "path should start with wiki/architecture/"
+        json["path"].as_str().unwrap().starts_with("raw/articles/"),
+        "path should start with raw/articles/"
     );
 }
 

@@ -8,7 +8,6 @@ use common::{TestWiki, sample_pages};
 use lw_core::fs::{list_pages, read_page};
 use lw_core::ingest::ingest_source;
 use lw_core::link::{extract_wiki_links, find_broken_links, resolve_link};
-use lw_core::llm::NoopLlm;
 use lw_core::search::{SearchQuery, Searcher};
 use lw_core::tag::Taxonomy;
 
@@ -125,12 +124,9 @@ async fn step6_ingest_source_file() {
         "# A Survey of Large Language Models (2024)\n\nComprehensive survey covering...",
     );
 
-    let result = ingest_source(wiki.root(), &source, "papers", &NoopLlm)
-        .await
-        .unwrap();
+    let result = ingest_source(wiki.root(), &source, "papers").await.unwrap();
     assert!(result.raw_path.exists());
     assert!(result.raw_path.starts_with(wiki.root().join("raw/papers")));
-    assert!(result.draft.is_none());
 }
 
 #[test]
@@ -192,9 +188,7 @@ async fn full_agent_workflow() {
 
     // Ingest
     let source = wiki.create_file("incoming/paper.txt", "Raw paper content.");
-    let ingest = ingest_source(wiki.root(), &source, "papers", &NoopLlm)
-        .await
-        .unwrap();
+    let ingest = ingest_source(wiki.root(), &source, "papers").await.unwrap();
     assert!(ingest.raw_path.exists());
 
     // Broken links
