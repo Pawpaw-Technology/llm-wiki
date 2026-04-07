@@ -175,6 +175,7 @@ impl WikiMcpServer {
                 "sources": page.sources,
                 "author": page.author,
                 "generator": page.generator,
+                "related": page.related,
                 "body": page.body,
                 "markdown": page.to_markdown(),
             })
