@@ -15,6 +15,8 @@ pub struct Frontmatter {
     pub author: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +27,7 @@ pub struct Page {
     pub sources: Vec<String>,
     pub author: Option<String>,
     pub generator: Option<String>,
+    pub related: Option<Vec<String>>,
     pub body: String,
 }
 
@@ -37,6 +40,7 @@ impl Page {
             sources: vec![],
             author: None,
             generator: None,
+            related: None,
             body: body.to_string(),
         }
     }
@@ -66,6 +70,7 @@ impl Page {
             sources: fm.sources,
             author: fm.author,
             generator: fm.generator,
+            related: fm.related,
             body: parsed.content,
         })
     }
@@ -78,6 +83,7 @@ impl Page {
             sources: self.sources.clone(),
             author: self.author.clone(),
             generator: self.generator.clone(),
+            related: self.related.clone(),
         }
     }
 

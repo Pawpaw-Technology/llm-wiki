@@ -33,6 +33,7 @@ fn write_and_read_page() {
         sources: vec![],
         author: Some("alice".to_string()),
         generator: None,
+        related: None,
         body: "Hello world.\n".to_string(),
     };
     let path = root.join("wiki/architecture/test-page.md");
@@ -55,6 +56,7 @@ fn list_pages_finds_markdown() {
         sources: vec![],
         author: None,
         generator: None,
+        related: None,
         body: "A.\n".into(),
     };
     let p2 = Page {
@@ -64,6 +66,7 @@ fn list_pages_finds_markdown() {
         sources: vec![],
         author: None,
         generator: None,
+        related: None,
         body: "B.\n".into(),
     };
     write_page(&root.join("wiki/architecture/a.md"), &p1).unwrap();

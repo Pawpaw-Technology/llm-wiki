@@ -9,6 +9,7 @@ fn make_page(title: &str, tags: &[&str]) -> Page {
         sources: vec![],
         author: None,
         generator: None,
+        related: None,
         body: String::new(),
     }
 }

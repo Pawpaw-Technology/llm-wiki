@@ -11,6 +11,7 @@ fn make_page(title: &str, tags: &[&str], body: &str) -> (String, Page) {
         sources: vec![],
         author: None,
         generator: None,
+        related: None,
         body: body.to_string(),
     };
     (format!("architecture/{slug}.md"), page)
@@ -147,6 +148,7 @@ fn search_chinese_text() {
         sources: vec![],
         author: None,
         generator: None,
+        related: None,
         body: "如果你在创业，陷入焦虑和负面情绪中无法自拔。".to_string(),
     };
     searcher
@@ -225,6 +227,7 @@ fn search_mixed_chinese_english() {
         sources: vec![],
         author: None,
         generator: None,
+        related: None,
         body: "使用 Claude Code 进行 AI Agent 开发的最佳实践。".to_string(),
     };
     searcher.index_page("tools/ai-agent-dev.md", &page).unwrap();

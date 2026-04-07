@@ -2,7 +2,7 @@ use crate::output::Format;
 use lw_core::fs::{load_schema, validate_wiki_path, write_page};
 use lw_core::ingest::ingest_source;
 use lw_core::llm::NoopLlm;
-use lw_core::page::{slugify, Page};
+use lw_core::page::{Page, slugify};
 use serde::Serialize;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -171,6 +171,7 @@ pub fn run(
             sources,
             author: None,
             generator: None,
+            related: None,
             body: format!(
                 "TODO: summarize {}\n",
                 url_origin
