@@ -1,6 +1,7 @@
 mod import;
 mod ingest;
 mod init;
+mod lint;
 mod output;
 mod query;
 mod read;
@@ -139,6 +140,19 @@ enum Commands {
         format: Format,
     },
 
+    /// Check wiki health: stale pages, broken links, orphans, TODO stubs
+    #[command(
+        after_help = "Examples:\n  lw lint\n  lw lint --format json\n  lw lint --category architecture"
+    )]
+    Lint {
+        /// Filter by category
+        #[arg(long)]
+        category: Option<String>,
+        /// Output format (human or json)
+        #[arg(short, long, default_value = "human")]
+        format: Format,
+    },
+
     /// Start MCP server (stdio)
     #[command(after_help = "Examples:\n  lw serve\n  lw serve --root /path/to/wiki")]
     Serve,
@@ -245,6 +259,13 @@ fn main() {
         },
         Commands::Status { format } => match resolve_root(cli.root) {
             Ok(root) => status::run(&root, &format),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Lint { category, format } => match resolve_root(cli.root) {
+            Ok(root) => lint::run(&root, &category, &format),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
