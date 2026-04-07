@@ -144,22 +144,30 @@ fn lint_detects_missing_concepts() {
 }
 
 #[test]
-fn lint_missing_concepts_not_flagged_when_target_exists() {
+fn lint_missing_concepts_not_flagged_when_target_exists_same_category() {
     let wiki = TestWiki::new();
 
-    let page_a = make_page(
-        "Page A",
-        &["architecture"],
-        "normal",
-        "See [[page-b]] for details.",
-    );
-    wiki.write_page("architecture/page-a.md", &page_a);
-
+    // Create the target page
     let page_b = make_page("Page B", &["architecture"], "normal", "Content of B.");
     wiki.write_page("architecture/page-b.md", &page_b);
 
+    // Create 3 pages referencing [[page-b]] — exceeds threshold
+    for i in 1..=3 {
+        let page = make_page(
+            &format!("Ref {}", i),
+            &["architecture"],
+            "normal",
+            &format!("See [[page-b]] for details. Ref {}.", i),
+        );
+        wiki.write_page(&format!("architecture/ref-{}.md", i), &page);
+    }
+
     let report = run_lint(wiki.root(), None).expect("lint should succeed");
-    assert!(report.missing_concepts.is_empty());
+    assert!(
+        report.missing_concepts.is_empty(),
+        "page-b exists in same category, should not be flagged: {:?}",
+        report.missing_concepts
+    );
 }
 
 #[test]

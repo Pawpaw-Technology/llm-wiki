@@ -49,6 +49,7 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
     let mut referenced_pages: HashSet<String> = HashSet::new();
     let mut wikilink_counts: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
+    let mut resolved_slugs: HashSet<String> = HashSet::new();
     let mut freshness_fresh = 0usize;
     let mut freshness_suspect = 0usize;
     let mut freshness_stale = 0usize;
@@ -114,8 +115,8 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
         for link in &links {
             *wikilink_counts.entry(link.clone()).or_insert(0) += 1;
             if let Some(resolved) = resolve_link(link, &wiki_dir) {
-                // Body wikilink resolves to a real page — count as reference
                 referenced_pages.insert(resolved.to_string_lossy().to_string());
+                resolved_slugs.insert(link.clone());
             }
         }
 
@@ -153,7 +154,7 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
     let missing_concepts: Vec<LintFinding> = wikilink_counts
         .into_iter()
         .filter(|(_, count)| *count >= 3)
-        .filter(|(slug, _)| resolve_link(slug, &wiki_dir).is_none())
+        .filter(|(slug, _)| !resolved_slugs.contains(slug))
         .map(|(slug, count)| LintFinding {
             path: format!("concepts/{}.md", slug),
             detail: format!("Referenced by {} pages but no concept page exists", count),
