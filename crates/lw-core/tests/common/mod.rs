@@ -44,6 +44,7 @@ impl TestWiki {
     }
 
     /// Path to the wiki/ subdirectory.
+    #[allow(dead_code)]
     pub fn wiki_dir(&self) -> PathBuf {
         self.root.join("wiki")
     }
@@ -71,6 +72,7 @@ impl TestWiki {
     }
 
     /// Create a TantivySearcher with its index isolated inside this wiki's temp dir.
+    #[allow(dead_code)]
     pub fn searcher(&self) -> TantivySearcher {
         let index_dir = self.root.join(lw_core::INDEX_DIR);
         std::fs::create_dir_all(&index_dir).expect("failed to create index dir");
@@ -79,6 +81,7 @@ impl TestWiki {
 
     /// Create a file at an arbitrary path under the temp root (useful for ingest sources).
     /// Returns the absolute path.
+    #[allow(dead_code)]
     pub fn create_file(&self, rel_path: &str, content: &str) -> PathBuf {
         let abs = self.root.join(rel_path);
         if let Some(parent) = abs.parent() {
