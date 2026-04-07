@@ -1,5 +1,5 @@
 use crate::fs::{category_from_path, list_pages, load_schema, read_page};
-use crate::git::{compute_freshness, page_age_days, FreshnessLevel};
+use crate::git::{FreshnessLevel, compute_freshness, page_age_days};
 use crate::link::{extract_wiki_links, resolve_link};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -51,24 +51,24 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
 
     // Read index.md to extract referenced pages
     let index_path = wiki_dir.join("index.md");
-    if index_path.exists() {
-        if let Ok(index_content) = std::fs::read_to_string(&index_path) {
-            // Extract markdown links like [title](path.md)
-            for cap in regex::Regex::new(r"\]\(([^)]+\.md)\)")
-                .unwrap()
-                .captures_iter(&index_content)
-            {
-                referenced_pages.insert(cap[1].to_string());
-            }
+    if index_path.exists()
+        && let Ok(index_content) = std::fs::read_to_string(&index_path)
+    {
+        // Extract markdown links like [title](path.md)
+        for cap in regex::Regex::new(r"\]\(([^)]+\.md)\)")
+            .unwrap()
+            .captures_iter(&index_content)
+        {
+            referenced_pages.insert(cap[1].to_string());
         }
     }
 
     for rel_path in &page_paths {
         let cat = category_from_path(rel_path).unwrap_or_default();
-        if let Some(filter) = category {
-            if cat != filter {
-                continue;
-            }
+        if let Some(filter) = category
+            && cat != filter
+        {
+            continue;
         }
 
         let rel_str = rel_path.to_string_lossy().to_string();

@@ -53,8 +53,7 @@ fn extract_pipe_syntax_takes_slug_only() {
 
 #[test]
 fn extract_plain_and_pipe_mixed() {
-    let body =
-        "Compare [[transformer]] with [[attention|Attention Mechanism]] and [[scaling-laws|Scaling Laws]].";
+    let body = "Compare [[transformer]] with [[attention|Attention Mechanism]] and [[scaling-laws|Scaling Laws]].";
     let links = extract_wiki_links(body);
     assert_eq!(links, vec!["transformer", "attention", "scaling-laws"]);
 }
