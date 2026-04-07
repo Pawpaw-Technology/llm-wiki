@@ -357,70 +357,41 @@ impl WikiMcpServer {
         }
     }
 
-    /// Freshness report for wiki pages using git log for page age.
+    /// Lint report for wiki pages: freshness, TODOs, broken related links, orphans, missing concepts.
     #[tool(
         name = "wiki_lint",
-        description = "Generate a freshness report for wiki pages using git log to determine page age. Groups pages into fresh, suspect, and stale categories based on their decay settings. Optionally filter by category."
+        description = "Run lint checks on wiki pages: freshness (stale/suspect), TODO markers, broken related links, orphan pages, and missing concepts (broken wikilinks). Optionally filter by category."
     )]
     fn wiki_lint(&self, Parameters(args): Parameters<WikiLintArgs>) -> String {
-        let wiki_dir = self.wiki_root.join("wiki");
-        match list_pages(&wiki_dir) {
-            Ok(page_paths) => {
-                let mut fresh: Vec<serde_json::Value> = Vec::new();
-                let mut suspect: Vec<serde_json::Value> = Vec::new();
-                let mut stale: Vec<serde_json::Value> = Vec::new();
-
-                for rel_path in &page_paths {
-                    let cat = category_from_path(rel_path).unwrap_or_default();
-
-                    if let Some(ref filter_cat) = args.category
-                        && cat != *filter_cat
-                    {
-                        continue;
-                    }
-
-                    let abs_path = wiki_dir.join(rel_path);
-                    let page = match read_page(&abs_path) {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-
-                    let decay = page.decay.as_deref().unwrap_or("normal");
-                    let age_days = git::page_age_days(&abs_path);
-                    let level = match age_days {
-                        Some(days) => git::compute_freshness(decay, days, self.default_review_days),
-                        None => FreshnessLevel::Fresh, // no git history = treat as fresh
-                    };
-
-                    let entry = serde_json::json!({
-                        "path": rel_path.to_string_lossy(),
-                        "title": page.title,
-                        "category": cat,
-                        "decay": decay,
-                        "age_days": age_days,
-                        "level": level.to_string(),
-                    });
-
-                    match level {
-                        FreshnessLevel::Fresh => fresh.push(entry),
-                        FreshnessLevel::Suspect => suspect.push(entry),
-                        FreshnessLevel::Stale => stale.push(entry),
-                    }
-                }
-
-                serde_json::json!({
-                    "summary": {
-                        "fresh": fresh.len(),
-                        "suspect": suspect.len(),
-                        "stale": stale.len(),
-                        "total": fresh.len() + suspect.len() + stale.len(),
-                    },
-                    "stale": stale,
-                    "suspect": suspect,
-                    "fresh": fresh,
-                })
-                .to_string()
-            }
+        match lw_core::lint::run_lint(&self.wiki_root, args.category.as_deref()) {
+            Ok(report) => serde_json::json!({
+                "summary": {
+                    "fresh": report.freshness.fresh,
+                    "suspect": report.freshness.suspect,
+                    "stale": report.freshness.stale,
+                    "total": report.freshness.fresh + report.freshness.suspect + report.freshness.stale,
+                    "todo_count": report.todo_pages.len(),
+                    "broken_related_count": report.broken_related.len(),
+                    "orphan_count": report.orphan_pages.len(),
+                    "missing_concept_count": report.missing_concepts.len(),
+                },
+                "stale_pages": report.freshness.stale_pages.iter()
+                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
+                    .collect::<Vec<_>>(),
+                "todo_pages": report.todo_pages.iter()
+                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
+                    .collect::<Vec<_>>(),
+                "broken_related": report.broken_related.iter()
+                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
+                    .collect::<Vec<_>>(),
+                "orphan_pages": report.orphan_pages.iter()
+                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
+                    .collect::<Vec<_>>(),
+                "missing_concepts": report.missing_concepts.iter()
+                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
+                    .collect::<Vec<_>>(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
