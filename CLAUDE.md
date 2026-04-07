@@ -30,7 +30,7 @@ Wiki is a **separate git repo** of markdown files, not in this repo.
 
 ## Key Design Rules
 
-- Only two traits: `Searcher` and `LlmBackend`; everything else is concrete types
+- Only one trait: `Searcher`; everything else is concrete types
 - All time-related data comes from `git log`, never stored in frontmatter
 - Freshness is computed, never stored
 - Tags are free-form (not enumerated in schema); categories are directories
