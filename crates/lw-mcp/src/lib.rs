@@ -365,34 +365,27 @@ impl WikiMcpServer {
     )]
     fn wiki_lint(&self, Parameters(args): Parameters<WikiLintArgs>) -> String {
         match lw_core::lint::run_lint(&self.wiki_root, args.category.as_deref()) {
-            Ok(report) => serde_json::json!({
-                "summary": {
-                    "fresh": report.freshness.fresh,
-                    "suspect": report.freshness.suspect,
-                    "stale": report.freshness.stale,
-                    "total": report.freshness.fresh + report.freshness.suspect + report.freshness.stale,
-                    "todo_count": report.todo_pages.len(),
-                    "broken_related_count": report.broken_related.len(),
-                    "orphan_count": report.orphan_pages.len(),
-                    "missing_concept_count": report.missing_concepts.len(),
-                },
-                "stale_pages": report.freshness.stale_pages.iter()
-                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
-                    .collect::<Vec<_>>(),
-                "todo_pages": report.todo_pages.iter()
-                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
-                    .collect::<Vec<_>>(),
-                "broken_related": report.broken_related.iter()
-                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
-                    .collect::<Vec<_>>(),
-                "orphan_pages": report.orphan_pages.iter()
-                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
-                    .collect::<Vec<_>>(),
-                "missing_concepts": report.missing_concepts.iter()
-                    .map(|f| serde_json::json!({"path": f.path, "detail": f.detail}))
-                    .collect::<Vec<_>>(),
-            })
-            .to_string(),
+            Ok(report) => {
+                let total = report.freshness.fresh + report.freshness.suspect + report.freshness.stale;
+                serde_json::json!({
+                    "summary": {
+                        "fresh": report.freshness.fresh,
+                        "suspect": report.freshness.suspect,
+                        "stale": report.freshness.stale,
+                        "total": total,
+                        "todo_count": report.todo_pages.len(),
+                        "broken_related_count": report.broken_related.len(),
+                        "orphan_count": report.orphan_pages.len(),
+                        "missing_concept_count": report.missing_concepts.len(),
+                    },
+                    "stale_pages": report.freshness.stale_pages,
+                    "todo_pages": report.todo_pages,
+                    "broken_related": report.broken_related,
+                    "orphan_pages": report.orphan_pages,
+                    "missing_concepts": report.missing_concepts,
+                })
+                .to_string()
+            }
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }

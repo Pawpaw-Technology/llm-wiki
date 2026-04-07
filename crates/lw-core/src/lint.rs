@@ -1,9 +1,14 @@
 use crate::fs::{category_from_path, list_pages, load_schema, read_page};
 use crate::git::{FreshnessLevel, compute_freshness, page_age_days};
 use crate::link::{extract_wiki_links, resolve_link};
+use regex::Regex;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::LazyLock;
+
+static INDEX_LINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\]\(([^)]+\.md)\)").expect("INDEX_LINK_RE is a valid regex"));
 
 /// A single lint finding with page path and detail message.
 #[derive(Debug, Serialize)]
@@ -54,11 +59,7 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
     if index_path.exists()
         && let Ok(index_content) = std::fs::read_to_string(&index_path)
     {
-        // Extract markdown links like [title](path.md)
-        for cap in regex::Regex::new(r"\]\(([^)]+\.md)\)")
-            .unwrap()
-            .captures_iter(&index_content)
-        {
+        for cap in INDEX_LINK_RE.captures_iter(&index_content) {
             referenced_pages.insert(cap[1].to_string());
         }
     }

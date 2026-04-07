@@ -998,6 +998,7 @@ dependencies = [
  "lw-core",
  "lw-mcp",
  "predicates",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
