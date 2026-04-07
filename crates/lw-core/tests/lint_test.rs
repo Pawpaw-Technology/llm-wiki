@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestWiki, make_page};
+use common::{make_page, TestWiki};
 use lw_core::lint::run_lint;
 
 #[test]
@@ -187,6 +187,34 @@ fn lint_category_filter_only_checks_matching() {
         report.todo_pages.len(),
         1,
         "only architecture pages should appear"
+    );
+}
+
+#[test]
+fn lint_missing_concepts_not_flagged_when_page_exists_in_other_category() {
+    let wiki = TestWiki::new();
+
+    // Create a page in ops/ (not concepts/)
+    let target = make_page("BDD Testing", &["ops"], "normal", "BDD testing guide.\n");
+    wiki.write_page("ops/bdd-testing.md", &target);
+
+    // Create 3 pages that all reference [[bdd-testing]] — exceeds 3-ref threshold
+    for i in 1..=3 {
+        let page = make_page(
+            &format!("Referrer {}", i),
+            &["architecture"],
+            "normal",
+            &format!("We use [[bdd-testing]] extensively. Page {}.\n", i),
+        );
+        wiki.write_page(&format!("architecture/referrer-{}.md", i), &page);
+    }
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+    // bdd-testing exists in ops/ — should NOT be flagged as missing concept
+    assert!(
+        report.missing_concepts.is_empty(),
+        "wikilink resolving to existing page in another category should not be flagged as missing concept, got: {:?}",
+        report.missing_concepts
     );
 }
 
