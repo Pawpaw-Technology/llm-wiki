@@ -8,7 +8,12 @@ pub fn extract_wiki_links(body: &str) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut links = Vec::new();
     for cap in WIKI_LINK_RE.captures_iter(body) {
-        let target = cap[1].trim().to_string();
+        let raw = cap[1].trim();
+        // Handle [[slug|display text]] pipe syntax: take only the slug
+        let target = match raw.split_once('|') {
+            Some((slug, _display)) => slug.trim().to_string(),
+            None => raw.to_string(),
+        };
         if seen.insert(target.clone()) {
             links.push(target);
         }

@@ -45,6 +45,28 @@ fn resolve_link_returns_none_for_missing() {
 }
 
 #[test]
+fn extract_pipe_syntax_takes_slug_only() {
+    let body = "See [[slug|display text]] for details.";
+    let links = extract_wiki_links(body);
+    assert_eq!(links, vec!["slug"]);
+}
+
+#[test]
+fn extract_plain_and_pipe_mixed() {
+    let body =
+        "Compare [[transformer]] with [[attention|Attention Mechanism]] and [[scaling-laws|Scaling Laws]].";
+    let links = extract_wiki_links(body);
+    assert_eq!(links, vec!["transformer", "attention", "scaling-laws"]);
+}
+
+#[test]
+fn extract_pipe_syntax_regression_plain_still_works() {
+    let body = "See [[simple-slug]] and [[another-one]].";
+    let links = extract_wiki_links(body);
+    assert_eq!(links, vec!["simple-slug", "another-one"]);
+}
+
+#[test]
 fn find_broken_links_detects_missing() {
     let tmp = tempfile::TempDir::new().unwrap();
     let wiki_dir = tmp.path().join("wiki");
