@@ -366,7 +366,8 @@ impl WikiMcpServer {
     fn wiki_lint(&self, Parameters(args): Parameters<WikiLintArgs>) -> String {
         match lw_core::lint::run_lint(&self.wiki_root, args.category.as_deref()) {
             Ok(report) => {
-                let total = report.freshness.fresh + report.freshness.suspect + report.freshness.stale;
+                let total =
+                    report.freshness.fresh + report.freshness.suspect + report.freshness.stale;
                 serde_json::json!({
                     "summary": {
                         "fresh": report.freshness.fresh,

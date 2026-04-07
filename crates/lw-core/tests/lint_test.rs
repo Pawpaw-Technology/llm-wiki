@@ -1,6 +1,6 @@
 mod common;
 
-use common::{make_page, TestWiki};
+use common::{TestWiki, make_page};
 use lw_core::lint::run_lint;
 
 #[test]
