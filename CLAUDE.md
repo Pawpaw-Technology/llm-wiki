@@ -41,7 +41,8 @@ Wiki is a **separate git repo** of markdown files, not in this repo.
 ```bash
 lw init                                          # scaffold wiki
 lw query "attention" --format json               # search
-lw ingest paper.pdf --category architecture --yes  # import (agent mode)
+lw ingest paper.pdf --category architecture --yes  # raw filing only (no wiki page created)
+lw lint --format json                            # health checks: TODO, orphans, broken links, stale, missing concepts
 lw serve                                         # MCP server (stdio)
 lw status                                        # wiki health overview
 ```
