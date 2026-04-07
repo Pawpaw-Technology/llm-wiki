@@ -149,14 +149,11 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
         })
         .collect();
 
-    // Check 6: Missing concepts — wikilinks referenced 3+ times with no concept page
+    // Check 6: Missing concepts — wikilinks referenced 3+ times with no existing page anywhere
     let missing_concepts: Vec<LintFinding> = wikilink_counts
         .into_iter()
         .filter(|(_, count)| *count >= 3)
-        .filter(|(slug, _)| {
-            let concept_path = wiki_dir.join(format!("concepts/{}.md", slug));
-            !concept_path.exists()
-        })
+        .filter(|(slug, _)| resolve_link(slug, &wiki_dir).is_none())
         .map(|(slug, count)| LintFinding {
             path: format!("concepts/{}.md", slug),
             detail: format!("Referenced by {} pages but no concept page exists", count),
