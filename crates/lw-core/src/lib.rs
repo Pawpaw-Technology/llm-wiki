@@ -7,6 +7,7 @@ pub mod link;
 pub mod lint;
 pub mod page;
 pub mod schema;
+pub mod section;
 pub mod search;
 pub mod status;
 pub mod tag;
