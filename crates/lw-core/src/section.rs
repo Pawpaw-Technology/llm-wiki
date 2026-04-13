@@ -1,5 +1,5 @@
 use comrak::nodes::NodeValue;
-use comrak::{Arena, Options, parse_document};
+use comrak::{parse_document, Arena, Options};
 
 /// Result of finding a section in a markdown body.
 #[derive(Debug, Clone)]
@@ -153,13 +153,75 @@ pub fn find_section(body: &str, section_name: &str) -> Option<SectionMatch> {
 
 /// Returns None if content is empty (no-op).
 /// Returns Some((new_body, section_found)).
-pub fn apply_append(_body: &str, _section_name: &str, _content: &str) -> Option<(String, bool)> {
-    todo!()
+pub fn apply_append(body: &str, section_name: &str, content: &str) -> Option<(String, bool)> {
+    let content = content.trim_end();
+    if content.is_empty() {
+        return None;
+    }
+
+    match find_section(body, section_name) {
+        Some(m) => {
+            let before_insert = &body[..m.section_end];
+            let trimmed_end = before_insert.trim_end_matches(|c: char| c.is_whitespace());
+            let trim_point = trimmed_end.len();
+
+            let mut result = String::with_capacity(body.len() + content.len() + 4);
+            result.push_str(&body[..trim_point]);
+            result.push('\n');
+            result.push_str(content);
+            result.push('\n');
+            result.push_str(&body[m.section_end..]);
+
+            Some((result, true))
+        }
+        None => {
+            let trimmed = body.trim_end();
+            let mut result =
+                String::with_capacity(body.len() + section_name.len() + content.len() + 10);
+            result.push_str(trimmed);
+            result.push_str("\n\n## ");
+            result.push_str(section_name);
+            result.push('\n');
+            result.push_str(content);
+            result.push('\n');
+
+            Some((result, false))
+        }
+    }
 }
 
 /// Returns (new_body, section_found).
-pub fn apply_upsert(_body: &str, _section_name: &str, _content: &str) -> (String, bool) {
-    todo!()
+pub fn apply_upsert(body: &str, section_name: &str, content: &str) -> (String, bool) {
+    let content = content.trim_end();
+
+    match find_section(body, section_name) {
+        Some(m) => {
+            let mut result = String::with_capacity(body.len() + content.len());
+            result.push_str(&body[..m.heading_end]);
+            if !content.is_empty() {
+                result.push_str(content);
+                result.push('\n');
+            }
+            result.push_str(&body[m.section_end..]);
+
+            (result, true)
+        }
+        None => {
+            let trimmed = body.trim_end();
+            let mut result =
+                String::with_capacity(body.len() + section_name.len() + content.len() + 10);
+            result.push_str(trimmed);
+            result.push_str("\n\n## ");
+            result.push_str(section_name);
+            result.push('\n');
+            if !content.is_empty() {
+                result.push_str(content);
+                result.push('\n');
+            }
+
+            (result, false)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +337,86 @@ This is the overview.
         let section = &body[m.heading_start..m.section_end];
         assert!(section.contains("some content"));
         assert!(!section.contains("# Next"));
+    }
+
+    #[test]
+    fn apply_append_existing() {
+        let (_, body) = split_frontmatter(SAMPLE_PAGE);
+        let (result, found) = apply_append(body, "References", "- new ref").unwrap();
+        assert!(found);
+        assert!(result.contains("- existing ref"));
+        assert!(result.contains("- new ref"));
+        let existing_pos = result.find("- existing ref").unwrap();
+        let new_pos = result.find("- new ref").unwrap();
+        assert!(new_pos > existing_pos);
+        assert!(result.contains("## See Also"));
+        assert!(result.contains("- [[other]]"));
+    }
+
+    #[test]
+    fn apply_append_missing() {
+        let (_, body) = split_frontmatter(SAMPLE_PAGE);
+        let (result, found) = apply_append(body, "Notes", "some notes").unwrap();
+        assert!(!found);
+        assert!(result.contains("## Notes"));
+        assert!(result.contains("some notes"));
+        let notes_pos = result.find("## Notes").unwrap();
+        let see_also_pos = result.find("## See Also").unwrap();
+        assert!(notes_pos > see_also_pos);
+    }
+
+    #[test]
+    fn apply_append_empty_is_noop() {
+        let (_, body) = split_frontmatter(SAMPLE_PAGE);
+        let result = apply_append(body, "References", "");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn apply_upsert_existing() {
+        let (_, body) = split_frontmatter(SAMPLE_PAGE);
+        let (result, found) = apply_upsert(body, "References", "- replaced");
+        assert!(found);
+        assert!(result.contains("## References"));
+        assert!(result.contains("- replaced"));
+        assert!(!result.contains("- existing ref"));
+        assert!(result.contains("## Overview"));
+        assert!(result.contains("## See Also"));
+    }
+
+    #[test]
+    fn apply_upsert_missing() {
+        let (_, body) = split_frontmatter(SAMPLE_PAGE);
+        let (result, found) = apply_upsert(body, "Notes", "new notes");
+        assert!(!found);
+        assert!(result.contains("## Notes"));
+        assert!(result.contains("new notes"));
+    }
+
+    #[test]
+    fn apply_upsert_empty_clears_body() {
+        let (_, body) = split_frontmatter(SAMPLE_PAGE);
+        let (result, found) = apply_upsert(body, "References", "");
+        assert!(found);
+        assert!(result.contains("## References"));
+        assert!(!result.contains("- existing ref"));
+        assert!(result.contains("## See Also"));
+    }
+
+    #[test]
+    fn tight_list_preservation() {
+        let body = "## Refs\n- a\n\n## Next\n";
+        let (result, _) = apply_append(body, "Refs", "- b").unwrap();
+        assert!(result.contains("- a\n- b\n"));
+        assert!(!result.contains("- a\n\n- b"));
+    }
+
+    #[test]
+    fn frontmatter_preservation() {
+        let raw = "---\ntitle: \"Quoted\"\ntags: [a, b]\n---\n\n## Sec\ntext\n";
+        let (fm, body) = split_frontmatter(raw);
+        let (new_body, _) = apply_append(body, "Sec", "appended").unwrap();
+        let reassembled = format!("{}{}", fm, new_body);
+        assert!(reassembled.starts_with("---\ntitle: \"Quoted\"\ntags: [a, b]\n---\n"));
     }
 }
