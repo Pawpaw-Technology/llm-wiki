@@ -538,12 +538,13 @@ Add to the `tests` module:
     }
 
     #[test]
-    fn newline_normalization() {
-        // Body where section ends with multiple blank lines
-        let body = "## Refs\n- a\n\n\n\n## Next\n";
+    fn tight_list_preservation() {
+        // Appending a list item should preserve tight list (no blank line)
+        let body = "## Refs\n- a\n\n## Next\n";
         let (result, _) = apply_append(body, "Refs", "- b").unwrap();
-        // Should have exactly one blank line between existing and appended
-        assert!(result.contains("- a\n\n- b\n"));
+        // Single \n between items, no blank line — tight list preserved
+        assert!(result.contains("- a\n- b\n"));
+        assert!(!result.contains("- a\n\n- b"));
     }
 
     #[test]
@@ -582,7 +583,7 @@ pub fn apply_append(body: &str, section_name: &str, content: &str) -> Option<(St
 
             let mut result = String::with_capacity(body.len() + content.len() + 4);
             result.push_str(&body[..trim_point]);
-            result.push_str("\n\n");
+            result.push('\n');
             result.push_str(content);
             result.push('\n');
             result.push_str(&body[m.section_end..]);

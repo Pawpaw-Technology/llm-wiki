@@ -53,9 +53,9 @@ Default heading level for new sections: `##`.
 
 ### Operations
 
-**`append_section`**: insert content before byte offset E (section end). Ensure exactly one blank line (`\n\n`) between existing content and appended content. Trim trailing whitespace from appended content. If content is empty, short-circuit — do not write the file (avoids mtime change and git noise).
+**`append_section`**: insert content before byte offset E (section end). Trim trailing whitespace from the existing section, then append a single `\n` followed by the content. The caller controls additional spacing — include a leading `\n` in content for a blank line separator if needed. This preserves tight lists (e.g., appending `- new ref` after `- existing ref` stays tight). Trim trailing whitespace from appended content. If content is empty, short-circuit — do not write the file (avoids mtime change and git noise).
 
-**`upsert_section`**: replace bytes `[heading_end, E)` where `heading_end` is the byte after the heading line's `\n`. Preserves the heading line itself. If content is empty, the section heading remains but the body is cleared.
+**`upsert_section`**: replace bytes `[heading_end, E)` where `heading_end` is the byte after the heading span's last `\n` (for ATX headings this is after the `# Title\n`; for setext headings this is after the `===\n` underline). Preserves the heading itself. If content is empty, the section heading remains but the body is cleared.
 
 **`overwrite`**: existing `Page::parse` + `write_page` path, unchanged.
 
@@ -316,7 +316,7 @@ Tests map 1:1 to the BDD scenarios above, implemented as Rust unit/integration t
 13. `apply_upsert_empty_clears_body` — heading preserved, body cleared
 14. `find_section_setext_heading` — `Overview\n========` matched by "Overview"
 15. `frontmatter_preservation` — raw frontmatter bytes unchanged after any op
-16. `newline_normalization` — exactly one blank line between existing content and appended content
+16. `tight_list_preservation` — appending `- b` after `- a` produces `- a\n- b` (no blank line), preserving tight list structure
 
 ### Integration tests (`lw-mcp` or `lw-cli`)
 
