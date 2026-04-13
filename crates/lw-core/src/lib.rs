@@ -8,6 +8,7 @@ pub mod lint;
 pub mod page;
 pub mod schema;
 pub mod search;
+pub mod section;
 pub mod status;
 pub mod tag;
 pub use error::{Result, WikiError};
