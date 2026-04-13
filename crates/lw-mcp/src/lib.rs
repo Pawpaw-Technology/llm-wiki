@@ -399,34 +399,34 @@ impl WikiMcpServer {
                     .to_string();
                 }
 
-                // Re-parse for index metadata
-                let page = match Page::parse(&assembled) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return serde_json::json!({
-                            "error": format!("Page written but failed to parse for indexing: {e}")
-                        })
-                        .to_string();
-                    }
-                };
-
-                // Incremental index update
-                if let Err(e) = self.searcher.index_page(&args.path, &page) {
-                    tracing::warn!("Failed to index page {}: {}", args.path, e);
-                }
-                if let Err(e) = self.searcher.commit() {
-                    tracing::warn!("Failed to commit index: {}", e);
-                }
-
+                // Re-parse for index metadata (write already succeeded)
                 let mut response = serde_json::json!({
                     "status": "ok",
                     "path": args.path,
-                    "title": page.title,
-                    "tags": page.tags,
                     "mode": args.mode,
                     "section": section_name,
                     "section_found": write_result.section_found,
                 });
+
+                match Page::parse(&assembled) {
+                    Ok(page) => {
+                        if let Err(e) = self.searcher.index_page(&args.path, &page) {
+                            tracing::warn!("Failed to index page {}: {}", args.path, e);
+                        }
+                        if let Err(e) = self.searcher.commit() {
+                            tracing::warn!("Failed to commit index: {}", e);
+                        }
+                        response["title"] = serde_json::json!(page.title);
+                        response["tags"] = serde_json::json!(page.tags);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Page written but failed to parse for indexing {}: {}",
+                            args.path,
+                            e
+                        );
+                    }
+                }
 
                 if !write_result.section_found {
                     response["warning"] = serde_json::json!(format!(

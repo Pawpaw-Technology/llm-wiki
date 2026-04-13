@@ -180,6 +180,10 @@ pub fn apply_append(body: &str, section_name: &str, content: &str) -> Option<Sec
             result.push('\n');
             result.push_str(content);
             result.push('\n');
+            // Restore blank line before next section if there is one
+            if m.section_end < body.len() {
+                result.push('\n');
+            }
             result.push_str(&body[m.section_end..]);
 
             Some(SectionWriteResult {
@@ -218,6 +222,10 @@ pub fn apply_upsert(body: &str, section_name: &str, content: &str) -> SectionWri
             result.push_str(&body[..m.heading_end]);
             if !content.is_empty() {
                 result.push_str(content);
+                result.push('\n');
+            }
+            // Restore blank line before next section if there is one
+            if m.section_end < body.len() {
                 result.push('\n');
             }
             result.push_str(&body[m.section_end..]);
@@ -440,6 +448,24 @@ This is the overview.
         let result = apply_append(body, "Refs", "- b").unwrap().body;
         assert!(result.contains("- a\n- b\n"));
         assert!(!result.contains("- a\n\n- b"));
+    }
+
+    #[test]
+    fn blank_line_between_sections_preserved_after_append() {
+        let body = "## References\n- existing ref\n\n## See Also\n- [[other]]\n";
+        let result = apply_append(body, "References", "- new ref").unwrap().body;
+        // Must have blank line before next section
+        assert!(result.contains("- new ref\n\n## See Also"));
+        // Content appended correctly
+        assert!(result.contains("- existing ref\n- new ref"));
+    }
+
+    #[test]
+    fn blank_line_between_sections_preserved_after_upsert() {
+        let body = "## References\n- old\n\n## See Also\n- [[other]]\n";
+        let result = apply_upsert(body, "References", "- replaced").body;
+        // Must have blank line before next section
+        assert!(result.contains("- replaced\n\n## See Also"));
     }
 
     #[test]
