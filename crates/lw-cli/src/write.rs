@@ -14,18 +14,15 @@ pub fn run(
 ) -> Result<(), anyhow::Error> {
     let abs_path = validate_wiki_path(root, path)?;
 
-    // Resolve content from --content or stdin
-    let resolved_content = match (content, stdin_available) {
-        (Some(_), true) => {
-            anyhow::bail!("provide content via --content or stdin, not both");
-        }
-        (Some(c), false) => c.clone(),
-        (None, true) => {
+    // Resolve content: --content takes priority, then stdin
+    let resolved_content = match content {
+        Some(c) => c.clone(),
+        None if stdin_available => {
             let mut buf = String::new();
             std::io::stdin().read_to_string(&mut buf)?;
             buf
         }
-        (None, false) => {
+        None => {
             anyhow::bail!("no content provided; use --content or pipe via stdin");
         }
     };
