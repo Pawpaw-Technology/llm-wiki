@@ -20,6 +20,11 @@ pub fn run(
         None if stdin_available => {
             let mut buf = String::new();
             std::io::stdin().read_to_string(&mut buf)?;
+            if buf.trim().is_empty() {
+                anyhow::bail!(
+                    "stdin is empty; provide content via --content or pipe non-empty input"
+                );
+            }
             buf
         }
         None => {
