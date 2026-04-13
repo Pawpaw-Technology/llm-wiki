@@ -53,28 +53,37 @@ Default heading level for new sections: `##`.
 
 ### Operations
 
-**`append_section`**: insert content before byte offset E (section end), after a `\n`.
+**`append_section`**: insert content before byte offset E (section end). Ensure exactly one blank line (`\n\n`) between existing content and appended content. Trim trailing whitespace from appended content. If content is empty, short-circuit — do not write the file (avoids mtime change and git noise).
 
-**`upsert_section`**: replace bytes from (end of heading line) to E with new content. Preserves the heading line itself.
+**`upsert_section`**: replace bytes `[heading_end, E)` where `heading_end` is the byte after the heading line's `\n`. Preserves the heading line itself. If content is empty, the section heading remains but the body is cleared.
 
 **`overwrite`**: existing `Page::parse` + `write_page` path, unchanged.
+
+Default heading level for newly created sections (both modes): `##`.
 
 ### Implementation Strategy
 
 **comrak for parsing, string slicing for splicing.**
 
-1. Frontmatter is stripped by `gray_matter` (existing `Page::parse`) — comrak never sees it
-2. comrak parses body into AST with `sourcepos` enabled
-3. Walk AST to find Heading nodes; extract text content and byte positions
-4. Determine section byte range `[S, E)` based on heading levels
-5. Splice content into the original body string at the computed offsets
-6. Reassemble frontmatter + modified body via `Page::to_markdown()`
+1. Read raw file as a string
+2. Split frontmatter from body at the closing `---` delimiter (byte-level split, not `Page::parse` — avoids serde round-trip that reorders YAML keys)
+3. comrak parses body into AST with `sourcepos` enabled
+4. Walk AST to find Heading nodes; extract text content and byte positions
+5. Determine section byte range `[S, E)` based on heading levels
+6. Splice content into the original body string at the computed offsets
+7. Reassemble: raw frontmatter (byte-for-byte original) + modified body, write to disk
+8. Parse the written page via `Page::parse` for index metadata only (title, tags)
+9. Update tantivy search index incrementally (same as current overwrite path)
+
+**Key: section ops never round-trip frontmatter through serde.** `Page::parse`/`to_markdown()` are not used for the read-modify-write cycle — only for extracting metadata for the index and response.
+
+`section.rs` exposes **pure functions** operating on `&str` → `String` (body in, body out). No filesystem I/O. The MCP handler and CLI command each do their own file read/write and call into `section.rs` for the splice. This keeps section.rs trivially testable.
 
 This gives:
 
 - **Correct parsing** — comrak handles code fences, HTML, setext headings, nested quotes
 - **Perfect fidelity** — untouched regions are byte-for-byte identical; git diffs are minimal
-- **No round-trip issues** — comrak is read-only here; we never serialize from AST
+- **No round-trip issues** — comrak is read-only; frontmatter is never serialized/deserialized for section ops
 
 ### MCP Interface
 
@@ -137,23 +146,24 @@ echo "- new item" | lw write tools/lw.md --mode append --section "See Also"
 
 ### Error Cases
 
-| Condition                                                    | Behavior                                              |
-| ------------------------------------------------------------ | ----------------------------------------------------- |
-| `mode` is `append_section`/`upsert_section` but no `section` | Error: "section parameter required"                   |
-| Page does not exist + mode is not `overwrite`                | Error: "page not found; use overwrite mode to create" |
-| Multiple sections with same name                             | Operate on first match, include `warning` in response |
-| Content is empty string                                      | Allowed (upsert clears section body; append is no-op) |
+| Condition                                                    | Behavior                                                  |
+| ------------------------------------------------------------ | --------------------------------------------------------- |
+| `mode` is `append_section`/`upsert_section` but no `section` | Error: "section parameter required"                       |
+| Page does not exist + mode is not `overwrite`                | Error: "page not found; use overwrite mode to create"     |
+| Multiple sections with same name                             | Operate on first match, include `warning` in response     |
+| Content is empty + `append_section`                          | Short-circuit: no file write, no index update             |
+| Content is empty + `upsert_section`                          | Clears section body; heading line preserved               |
+| Both `--content` and stdin provided (CLI)                    | Error: "provide content via --content or stdin, not both" |
 
 ## File Changes
 
-| File                           | Change                                                               |
-| ------------------------------ | -------------------------------------------------------------------- |
-| `lw-core/Cargo.toml`           | Add `comrak` dependency                                              |
-| `lw-core/src/section.rs` (new) | `find_section()`, `apply_append()`, `apply_upsert()`                 |
-| `lw-core/src/lib.rs`           | `pub mod section;`                                                   |
-| `lw-core/src/fs.rs`            | Add `write_section()` that combines read + section op + write        |
-| `lw-mcp/src/lib.rs`            | Extend `WikiWriteArgs` with `mode`/`section`; branch in `wiki_write` |
-| `lw-cli/src/main.rs`           | Add `lw write` subcommand with `--mode`, `--section`, `--content`    |
+| File                           | Change                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `lw-core/Cargo.toml`           | Add `comrak` dependency                                                                     |
+| `lw-core/src/section.rs` (new) | Pure functions: `find_section()`, `apply_append()`, `apply_upsert()`, `split_frontmatter()` |
+| `lw-core/src/lib.rs`           | `pub mod section;`                                                                          |
+| `lw-mcp/src/lib.rs`            | Extend `WikiWriteArgs` with `mode`/`section`; branch in `wiki_write`; read/write I/O here   |
+| `lw-cli/src/main.rs`           | Add `lw write` subcommand with `--mode`, `--section`, `--content`                           |
 
 ## BDD Scenarios
 
@@ -231,7 +241,7 @@ Feature: wiki_write section operations
     And the response includes a warning about multiple matches
 
   Scenario: Overwrite mode is unchanged
-    When I wiki_write with mode "overwrite", content is full page with frontmatter
+    When I wiki_write with mode "overwrite" and content including full frontmatter
     Then the entire page is replaced (existing behavior)
 
   Scenario: Append/upsert on non-existent page returns error
@@ -257,6 +267,29 @@ Feature: wiki_write section operations
     Then section is not found (it's inside a code fence)
     And a new "## Fake Heading" is created at end of page
 
+  Scenario: Append with empty content is a no-op
+    When I wiki_write with mode "append_section", section "References", content ""
+    Then the file is not modified (no write, no mtime change)
+
+  Scenario: Upsert with empty content clears section body
+    When I wiki_write with mode "upsert_section", section "References", content ""
+    Then the "## References" heading is preserved
+    And the section body is empty
+    And "## See Also" immediately follows
+
+  Scenario: Setext-style heading is matched
+    Given a page with:
+      """
+      Overview
+      ========
+      some content
+
+      ## Next
+      """
+    When I append to section "Overview" with content "- appended"
+    Then "- appended" is appended to the "Overview" section
+    And "## Next" is unaffected
+
   Scenario: Frontmatter is never corrupted
     When I perform any section operation
     Then the YAML frontmatter is byte-for-byte identical to before
@@ -279,14 +312,20 @@ Tests map 1:1 to the BDD scenarios above, implemented as Rust unit/integration t
 9. `apply_append_missing` — creates new section at page end
 10. `apply_upsert_existing` — replaces section body, preserves heading
 11. `apply_upsert_missing` — creates new section at page end
-12. `frontmatter_preservation` — frontmatter bytes unchanged after any op
+12. `apply_append_empty_is_noop` — empty content returns body unchanged
+13. `apply_upsert_empty_clears_body` — heading preserved, body cleared
+14. `find_section_setext_heading` — `Overview\n========` matched by "Overview"
+15. `frontmatter_preservation` — raw frontmatter bytes unchanged after any op
+16. `newline_normalization` — exactly one blank line between existing content and appended content
 
 ### Integration tests (`lw-mcp` or `lw-cli`)
 
-13. `mcp_wiki_write_append_section` — full MCP round-trip
-14. `mcp_wiki_write_upsert_section` — full MCP round-trip
-15. `mcp_wiki_write_overwrite_unchanged` — backwards compatibility
-16. `mcp_wiki_write_missing_section_param` — error response
-17. `mcp_wiki_write_page_not_found` — error response
-18. `cli_write_append_section` — CLI with --mode append --section
-19. `cli_write_upsert_from_stdin` — pipe content via stdin
+17. `mcp_wiki_write_append_section` — full MCP round-trip
+18. `mcp_wiki_write_upsert_section` — full MCP round-trip
+19. `mcp_wiki_write_overwrite_unchanged` — backwards compatibility
+20. `mcp_wiki_write_missing_section_param` — error response
+21. `mcp_wiki_write_page_not_found` — error response
+22. `mcp_wiki_write_append_empty_noop` — no file change, no index update
+23. `cli_write_append_section` — CLI with --mode append --section
+24. `cli_write_upsert_from_stdin` — pipe content via stdin
+25. `cli_write_content_and_stdin_error` — error when both provided
