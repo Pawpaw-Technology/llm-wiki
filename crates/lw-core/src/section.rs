@@ -151,9 +151,19 @@ pub fn find_section(body: &str, section_name: &str) -> Option<SectionMatch> {
     })
 }
 
+/// Result of a section write operation.
+#[derive(Debug, Clone)]
+pub struct SectionWriteResult {
+    /// The modified body string.
+    pub body: String,
+    /// True if the section already existed.
+    pub section_found: bool,
+    /// True if multiple sections matched (operated on first).
+    pub multiple_matches: bool,
+}
+
 /// Returns None if content is empty (no-op).
-/// Returns Some((new_body, section_found)).
-pub fn apply_append(body: &str, section_name: &str, content: &str) -> Option<(String, bool)> {
+pub fn apply_append(body: &str, section_name: &str, content: &str) -> Option<SectionWriteResult> {
     let content = content.trim_end();
     if content.is_empty() {
         return None;
@@ -172,7 +182,11 @@ pub fn apply_append(body: &str, section_name: &str, content: &str) -> Option<(St
             result.push('\n');
             result.push_str(&body[m.section_end..]);
 
-            Some((result, true))
+            Some(SectionWriteResult {
+                body: result,
+                section_found: true,
+                multiple_matches: m.multiple_matches,
+            })
         }
         None => {
             let trimmed = body.trim_end();
@@ -185,13 +199,17 @@ pub fn apply_append(body: &str, section_name: &str, content: &str) -> Option<(St
             result.push_str(content);
             result.push('\n');
 
-            Some((result, false))
+            Some(SectionWriteResult {
+                body: result,
+                section_found: false,
+                multiple_matches: false,
+            })
         }
     }
 }
 
-/// Returns (new_body, section_found).
-pub fn apply_upsert(body: &str, section_name: &str, content: &str) -> (String, bool) {
+/// Replace or create a named section.
+pub fn apply_upsert(body: &str, section_name: &str, content: &str) -> SectionWriteResult {
     let content = content.trim_end();
 
     match find_section(body, section_name) {
@@ -204,7 +222,11 @@ pub fn apply_upsert(body: &str, section_name: &str, content: &str) -> (String, b
             }
             result.push_str(&body[m.section_end..]);
 
-            (result, true)
+            SectionWriteResult {
+                body: result,
+                section_found: true,
+                multiple_matches: m.multiple_matches,
+            }
         }
         None => {
             let trimmed = body.trim_end();
@@ -219,7 +241,11 @@ pub fn apply_upsert(body: &str, section_name: &str, content: &str) -> (String, b
                 result.push('\n');
             }
 
-            (result, false)
+            SectionWriteResult {
+                body: result,
+                section_found: false,
+                multiple_matches: false,
+            }
         }
     }
 }
@@ -342,7 +368,8 @@ This is the overview.
     #[test]
     fn apply_append_existing() {
         let (_, body) = split_frontmatter(SAMPLE_PAGE);
-        let (result, found) = apply_append(body, "References", "- new ref").unwrap();
+        let r = apply_append(body, "References", "- new ref").unwrap();
+        let (result, found) = (r.body, r.section_found);
         assert!(found);
         assert!(result.contains("- existing ref"));
         assert!(result.contains("- new ref"));
@@ -356,7 +383,8 @@ This is the overview.
     #[test]
     fn apply_append_missing() {
         let (_, body) = split_frontmatter(SAMPLE_PAGE);
-        let (result, found) = apply_append(body, "Notes", "some notes").unwrap();
+        let r = apply_append(body, "Notes", "some notes").unwrap();
+        let (result, found) = (r.body, r.section_found);
         assert!(!found);
         assert!(result.contains("## Notes"));
         assert!(result.contains("some notes"));
@@ -375,7 +403,8 @@ This is the overview.
     #[test]
     fn apply_upsert_existing() {
         let (_, body) = split_frontmatter(SAMPLE_PAGE);
-        let (result, found) = apply_upsert(body, "References", "- replaced");
+        let r = apply_upsert(body, "References", "- replaced");
+        let (result, found) = (r.body, r.section_found);
         assert!(found);
         assert!(result.contains("## References"));
         assert!(result.contains("- replaced"));
@@ -387,7 +416,8 @@ This is the overview.
     #[test]
     fn apply_upsert_missing() {
         let (_, body) = split_frontmatter(SAMPLE_PAGE);
-        let (result, found) = apply_upsert(body, "Notes", "new notes");
+        let r = apply_upsert(body, "Notes", "new notes");
+        let (result, found) = (r.body, r.section_found);
         assert!(!found);
         assert!(result.contains("## Notes"));
         assert!(result.contains("new notes"));
@@ -396,7 +426,8 @@ This is the overview.
     #[test]
     fn apply_upsert_empty_clears_body() {
         let (_, body) = split_frontmatter(SAMPLE_PAGE);
-        let (result, found) = apply_upsert(body, "References", "");
+        let r = apply_upsert(body, "References", "");
+        let (result, found) = (r.body, r.section_found);
         assert!(found);
         assert!(result.contains("## References"));
         assert!(!result.contains("- existing ref"));
@@ -406,7 +437,7 @@ This is the overview.
     #[test]
     fn tight_list_preservation() {
         let body = "## Refs\n- a\n\n## Next\n";
-        let (result, _) = apply_append(body, "Refs", "- b").unwrap();
+        let result = apply_append(body, "Refs", "- b").unwrap().body;
         assert!(result.contains("- a\n- b\n"));
         assert!(!result.contains("- a\n\n- b"));
     }
@@ -415,7 +446,7 @@ This is the overview.
     fn frontmatter_preservation() {
         let raw = "---\ntitle: \"Quoted\"\ntags: [a, b]\n---\n\n## Sec\ntext\n";
         let (fm, body) = split_frontmatter(raw);
-        let (new_body, _) = apply_append(body, "Sec", "appended").unwrap();
+        let new_body = apply_append(body, "Sec", "appended").unwrap().body;
         let reassembled = format!("{}{}", fm, new_body);
         assert!(reassembled.starts_with("---\ntitle: \"Quoted\"\ntags: [a, b]\n---\n"));
     }

@@ -371,7 +371,7 @@ impl WikiMcpServer {
 
                 let (frontmatter, body) = lw_core::section::split_frontmatter(&raw);
 
-                let (new_body, section_found) = if args.mode == "append_section" {
+                let write_result = if args.mode == "append_section" {
                     match lw_core::section::apply_append(body, section_name, &args.content) {
                         Some(result) => result,
                         None => {
@@ -391,7 +391,7 @@ impl WikiMcpServer {
                 };
 
                 // Reassemble and write
-                let assembled = format!("{frontmatter}{new_body}");
+                let assembled = format!("{frontmatter}{}", write_result.body);
                 if let Err(e) = std::fs::write(&abs_path, &assembled) {
                     return serde_json::json!({
                         "error": format!("Failed to write page: {e}")
@@ -425,12 +425,18 @@ impl WikiMcpServer {
                     "tags": page.tags,
                     "mode": args.mode,
                     "section": section_name,
-                    "section_found": section_found,
+                    "section_found": write_result.section_found,
                 });
 
-                if !section_found {
+                if !write_result.section_found {
                     response["warning"] = serde_json::json!(format!(
                         "Section '{}' not found; created at end of page",
+                        section_name
+                    ));
+                }
+                if write_result.multiple_matches {
+                    response["warning"] = serde_json::json!(format!(
+                        "Section '{}' matched multiple headings; operated on first occurrence",
                         section_name
                     ));
                 }

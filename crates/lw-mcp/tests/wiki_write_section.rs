@@ -42,8 +42,9 @@ fn integration_append_section() {
     let abs = validate_wiki_path(&root, "tools/test.md").unwrap();
     let raw = std::fs::read_to_string(&abs).unwrap();
     let (fm, body) = section::split_frontmatter(&raw);
-    let (new_body, found) = section::apply_append(body, "References", "- new ref").unwrap();
-    assert!(found);
+    let r = section::apply_append(body, "References", "- new ref").unwrap();
+    assert!(r.section_found);
+    let new_body = r.body;
     let output = format!("{}{}", fm, new_body);
     std::fs::write(&abs, &output).unwrap();
 
@@ -65,8 +66,9 @@ fn integration_upsert_section() {
     let abs = validate_wiki_path(&root, "tools/test.md").unwrap();
     let raw = std::fs::read_to_string(&abs).unwrap();
     let (fm, body) = section::split_frontmatter(&raw);
-    let (new_body, found) = section::apply_upsert(body, "References", "- replaced");
-    assert!(found);
+    let r = section::apply_upsert(body, "References", "- replaced");
+    assert!(r.section_found);
+    let new_body = r.body;
     let output = format!("{}{}", fm, new_body);
     std::fs::write(&abs, &output).unwrap();
 
@@ -120,7 +122,9 @@ fn integration_frontmatter_preserved_after_section_op() {
     let abs = validate_wiki_path(&root, "tools/test.md").unwrap();
     let raw = std::fs::read_to_string(&abs).unwrap();
     let (fm, body) = section::split_frontmatter(&raw);
-    let (new_body, _) = section::apply_append(body, "Section", "- appended").unwrap();
+    let new_body = section::apply_append(body, "Section", "- appended")
+        .unwrap()
+        .body;
     let output = format!("{}{}", fm, new_body);
     std::fs::write(&abs, &output).unwrap();
 

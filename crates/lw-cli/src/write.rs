@@ -44,10 +44,15 @@ pub fn run(
 
             let (frontmatter, body) = section::split_frontmatter(&raw);
             match section::apply_append(body, section_name, &resolved_content) {
-                Some((new_body, found)) => {
-                    let output = format!("{}{}", frontmatter, new_body);
+                Some(r) => {
+                    let output = format!("{}{}", frontmatter, r.body);
                     std::fs::write(&abs_path, output)?;
-                    if found {
+                    if r.multiple_matches {
+                        eprintln!(
+                            "Warning: section '{section_name}' matched multiple headings; operated on first"
+                        );
+                    }
+                    if r.section_found {
                         eprintln!("Appended to section '{section_name}' in {path}");
                     } else {
                         eprintln!("Created section '{section_name}' at end of {path}");
@@ -68,10 +73,15 @@ pub fn run(
             })?;
 
             let (frontmatter, body) = section::split_frontmatter(&raw);
-            let (new_body, found) = section::apply_upsert(body, section_name, &resolved_content);
-            let output = format!("{}{}", frontmatter, new_body);
+            let r = section::apply_upsert(body, section_name, &resolved_content);
+            let output = format!("{}{}", frontmatter, r.body);
             std::fs::write(&abs_path, output)?;
-            if found {
+            if r.multiple_matches {
+                eprintln!(
+                    "Warning: section '{section_name}' matched multiple headings; operated on first"
+                );
+            }
+            if r.section_found {
                 eprintln!("Replaced section '{section_name}' in {path}");
             } else {
                 eprintln!("Created section '{section_name}' at end of {path}");
