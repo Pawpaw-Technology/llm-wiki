@@ -1,5 +1,5 @@
 use comrak::nodes::NodeValue;
-use comrak::{parse_document, Arena, Options};
+use comrak::{Arena, Options, parse_document};
 
 /// Result of finding a section in a markdown body.
 #[derive(Debug, Clone)]

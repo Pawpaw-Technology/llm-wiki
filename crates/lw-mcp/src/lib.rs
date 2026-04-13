@@ -429,9 +429,10 @@ impl WikiMcpServer {
                 });
 
                 if !section_found {
-                    response["warning"] = serde_json::json!(
-                        format!("Section '{}' not found; created at end of page", section_name)
-                    );
+                    response["warning"] = serde_json::json!(format!(
+                        "Section '{}' not found; created at end of page",
+                        section_name
+                    ));
                 }
 
                 response.to_string()
