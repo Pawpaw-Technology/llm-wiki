@@ -31,36 +31,42 @@ pub fn split_frontmatter(raw: &str) -> (&str, &str) {
     ("", raw)
 }
 
-/// Returns the byte offset of the start of a 1-based line number.
-fn byte_offset_for_line(text: &str, line: usize) -> usize {
-    if line <= 1 {
-        return 0;
-    }
-    let mut current_line = 1;
-    for (i, b) in text.bytes().enumerate() {
-        if b == b'\n' {
-            current_line += 1;
-            if current_line == line {
-                return i + 1;
-            }
-        }
-    }
-    text.len()
+/// Precomputed newline offset table for O(1) line→byte lookups.
+/// `line_starts[i]` is the byte offset of line `i+1` (0-indexed array, 1-based lines).
+struct LineOffsets {
+    line_starts: Vec<usize>,
+    text_len: usize,
 }
 
-/// Returns the byte offset just past the `\n` ending the given 1-based line.
-fn byte_offset_after_line(text: &str, line: usize) -> usize {
-    let mut current_line = 1;
-    for (i, b) in text.bytes().enumerate() {
-        if b == b'\n' {
-            if current_line == line {
-                return i + 1;
+impl LineOffsets {
+    fn build(text: &str) -> Self {
+        let mut line_starts: Vec<usize> = vec![0]; // line 1 starts at byte 0
+        for (i, b) in text.bytes().enumerate() {
+            if b == b'\n' {
+                line_starts.push(i + 1);
             }
-            current_line += 1;
+        }
+        Self {
+            line_starts,
+            text_len: text.len(),
         }
     }
-    // Last line has no trailing newline
-    text.len()
+
+    /// Byte offset of the start of a 1-based line number.
+    fn line_start(&self, line: usize) -> usize {
+        if line == 0 {
+            return 0;
+        }
+        self.line_starts
+            .get(line - 1)
+            .copied()
+            .unwrap_or(self.text_len)
+    }
+
+    /// Byte offset just past the `\n` ending the given 1-based line.
+    fn line_end(&self, line: usize) -> usize {
+        self.line_starts.get(line).copied().unwrap_or(self.text_len)
+    }
 }
 
 /// Recursively collect plain text from an AST node's children.
@@ -95,16 +101,16 @@ pub fn find_section(body: &str, section_name: &str) -> Option<SectionMatch> {
     options.render.sourcepos = true;
 
     let root = parse_document(&arena, body, &options);
+    let offsets = LineOffsets::build(body);
 
-    // Collect all headings from the AST
     let mut headings: Vec<HeadingInfo> = Vec::new();
     for child in root.children() {
         let data = child.data.borrow();
         if let NodeValue::Heading(ref h) = data.value {
             let level = h.level;
             let sp = data.sourcepos;
-            let start_byte = byte_offset_for_line(body, sp.start.line);
-            let end_byte = byte_offset_after_line(body, sp.end.line);
+            let start_byte = offsets.line_start(sp.start.line);
+            let end_byte = offsets.line_end(sp.end.line);
             let mut text = String::new();
             drop(data);
             collect_text(child, &mut text);

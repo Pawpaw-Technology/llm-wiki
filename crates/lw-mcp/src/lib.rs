@@ -330,7 +330,6 @@ impl WikiMcpServer {
                         .to_string();
                 }
 
-                // Incremental index update
                 if let Err(e) = self.searcher.index_page(&args.path, &page) {
                     tracing::warn!("Failed to index page {}: {}", args.path, e);
                 }
@@ -358,7 +357,6 @@ impl WikiMcpServer {
                     }
                 };
 
-                // Read existing file
                 let raw = match std::fs::read_to_string(&abs_path) {
                     Ok(r) => r,
                     Err(_) => {
@@ -390,7 +388,6 @@ impl WikiMcpServer {
                     lw_core::section::apply_upsert(body, section_name, &args.content)
                 };
 
-                // Reassemble and write
                 let assembled = format!("{frontmatter}{}", write_result.body);
                 if let Err(e) = std::fs::write(&abs_path, &assembled) {
                     return serde_json::json!({
@@ -399,7 +396,6 @@ impl WikiMcpServer {
                     .to_string();
                 }
 
-                // Re-parse for index metadata (write already succeeded)
                 let mut response = serde_json::json!({
                     "status": "ok",
                     "path": args.path,
@@ -428,15 +424,14 @@ impl WikiMcpServer {
                     }
                 }
 
-                if !write_result.section_found {
-                    response["warning"] = serde_json::json!(format!(
-                        "Section '{}' not found; created at end of page",
-                        section_name
-                    ));
-                }
                 if write_result.multiple_matches {
                     response["warning"] = serde_json::json!(format!(
                         "Section '{}' matched multiple headings; operated on first occurrence",
+                        section_name
+                    ));
+                } else if !write_result.section_found {
+                    response["warning"] = serde_json::json!(format!(
+                        "Section '{}' not found; created at end of page",
                         section_name
                     ));
                 }
