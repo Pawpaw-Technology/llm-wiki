@@ -7,6 +7,7 @@ mod query;
 mod read;
 mod serve;
 mod status;
+mod write;
 
 use clap::Parser;
 use output::Format;
@@ -156,6 +157,24 @@ enum Commands {
     /// Start MCP server (stdio)
     #[command(after_help = "Examples:\n  lw serve\n  lw serve --root /path/to/wiki")]
     Serve,
+
+    /// Write or update a wiki page (overwrite, append to section, or upsert section)
+    #[command(
+        after_help = "Examples:\n  echo 'full content' | lw write tools/page.md\n  lw write tools/page.md --mode append --section References --content '- [[link]]'\n  echo 'new docs' | lw write tools/page.md --mode upsert --section Usage"
+    )]
+    Write {
+        /// Wiki-relative path (e.g. tools/page.md)
+        path: String,
+        /// Write mode: overwrite (default), append, upsert
+        #[arg(long, default_value = "overwrite")]
+        mode: String,
+        /// Section name for append/upsert modes
+        #[arg(long)]
+        section: Option<String>,
+        /// Content to write (alternative to stdin)
+        #[arg(long)]
+        content: Option<String>,
+    },
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -273,6 +292,23 @@ fn main() {
         },
         Commands::Serve => match resolve_root(cli.root) {
             Ok(root) => serve::run(&root),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Write {
+            path,
+            mode,
+            section,
+            content,
+        } => match resolve_root(cli.root) {
+            Ok(root) => {
+                // Detect if stdin has data (is not a terminal)
+                use std::io::IsTerminal;
+                let stdin_available = !std::io::stdin().is_terminal();
+                write::run(&root, &path, &mode, &section, &content, stdin_available)
+            }
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
