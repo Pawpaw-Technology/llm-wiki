@@ -63,8 +63,19 @@ pub struct WikiTagsArgs {
 pub struct WikiWriteArgs {
     /// Relative path within wiki/ (e.g. "architecture/new-page.md")
     pub path: String,
-    /// Full markdown content including YAML frontmatter
+    /// Content to write. For "overwrite" mode: full markdown with YAML frontmatter.
+    /// For "append_section"/"upsert_section": body fragment without frontmatter.
     pub content: String,
+    /// Write mode: "overwrite" (default), "append_section", or "upsert_section"
+    #[serde(default = "default_write_mode")]
+    pub mode: String,
+    /// Section name for append/upsert modes (case-insensitive, no ## prefix needed)
+    #[serde(default)]
+    pub section: Option<String>,
+}
+
+fn default_write_mode() -> String {
+    "overwrite".to_string()
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -293,44 +304,144 @@ impl WikiMcpServer {
         }
     }
 
-    /// Write or update a wiki page. Content must include YAML frontmatter.
+    /// Write or update a wiki page with support for section-level operations.
     #[tool(
         name = "wiki_write",
-        description = "Write or update a wiki page. The content must include YAML frontmatter with at least a title field. After writing, the search index is updated incrementally."
+        description = "Write or update a wiki page. Modes: 'overwrite' (default) replaces the entire page (content must include YAML frontmatter). 'append_section' appends content to a named section. 'upsert_section' replaces or creates a named section. Section matching is case-insensitive."
     )]
     fn wiki_write(&self, Parameters(args): Parameters<WikiWriteArgs>) -> String {
-        let page = match Page::parse(&args.content) {
-            Ok(p) => p,
-            Err(e) => {
-                return serde_json::json!({"error": format!("Invalid page content: {e}")})
-                    .to_string();
-            }
-        };
-
         let abs_path = match validate_wiki_path(&self.wiki_root, &args.path) {
             Ok(p) => p,
             Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
         };
 
-        if let Err(e) = write_page(&abs_path, &page) {
-            return serde_json::json!({"error": format!("Failed to write page: {e}")}).to_string();
-        }
+        match args.mode.as_str() {
+            "overwrite" => {
+                let page = match Page::parse(&args.content) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return serde_json::json!({"error": format!("Invalid page content: {e}")})
+                            .to_string();
+                    }
+                };
 
-        // Incremental index update
-        if let Err(e) = self.searcher.index_page(&args.path, &page) {
-            tracing::warn!("Failed to index page {}: {}", args.path, e);
-        }
-        if let Err(e) = self.searcher.commit() {
-            tracing::warn!("Failed to commit index: {}", e);
-        }
+                if let Err(e) = write_page(&abs_path, &page) {
+                    return serde_json::json!({"error": format!("Failed to write page: {e}")})
+                        .to_string();
+                }
 
-        serde_json::json!({
-            "status": "ok",
-            "path": args.path,
-            "title": page.title,
-            "tags": page.tags,
-        })
-        .to_string()
+                // Incremental index update
+                if let Err(e) = self.searcher.index_page(&args.path, &page) {
+                    tracing::warn!("Failed to index page {}: {}", args.path, e);
+                }
+                if let Err(e) = self.searcher.commit() {
+                    tracing::warn!("Failed to commit index: {}", e);
+                }
+
+                serde_json::json!({
+                    "status": "ok",
+                    "path": args.path,
+                    "title": page.title,
+                    "tags": page.tags,
+                })
+                .to_string()
+            }
+
+            "append_section" | "upsert_section" => {
+                let section_name = match &args.section {
+                    Some(s) if !s.is_empty() => s.as_str(),
+                    _ => {
+                        return serde_json::json!({
+                            "error": format!("'section' is required for {} mode", args.mode)
+                        })
+                        .to_string();
+                    }
+                };
+
+                // Read existing file
+                let raw = match std::fs::read_to_string(&abs_path) {
+                    Ok(r) => r,
+                    Err(_) => {
+                        return serde_json::json!({
+                            "error": "page not found; use overwrite mode to create"
+                        })
+                        .to_string();
+                    }
+                };
+
+                let (frontmatter, body) = lw_core::section::split_frontmatter(&raw);
+
+                let (new_body, section_found) = if args.mode == "append_section" {
+                    match lw_core::section::apply_append(body, section_name, &args.content) {
+                        Some(result) => result,
+                        None => {
+                            // Empty content — noop
+                            return serde_json::json!({
+                                "status": "ok",
+                                "path": args.path,
+                                "mode": args.mode,
+                                "section": section_name,
+                                "noop": true,
+                            })
+                            .to_string();
+                        }
+                    }
+                } else {
+                    lw_core::section::apply_upsert(body, section_name, &args.content)
+                };
+
+                // Reassemble and write
+                let assembled = format!("{frontmatter}{new_body}");
+                if let Err(e) = std::fs::write(&abs_path, &assembled) {
+                    return serde_json::json!({
+                        "error": format!("Failed to write page: {e}")
+                    })
+                    .to_string();
+                }
+
+                // Re-parse for index metadata
+                let page = match Page::parse(&assembled) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return serde_json::json!({
+                            "error": format!("Page written but failed to parse for indexing: {e}")
+                        })
+                        .to_string();
+                    }
+                };
+
+                // Incremental index update
+                if let Err(e) = self.searcher.index_page(&args.path, &page) {
+                    tracing::warn!("Failed to index page {}: {}", args.path, e);
+                }
+                if let Err(e) = self.searcher.commit() {
+                    tracing::warn!("Failed to commit index: {}", e);
+                }
+
+                let mut response = serde_json::json!({
+                    "status": "ok",
+                    "path": args.path,
+                    "title": page.title,
+                    "tags": page.tags,
+                    "mode": args.mode,
+                    "section": section_name,
+                    "section_found": section_found,
+                });
+
+                if !section_found {
+                    response["warning"] = serde_json::json!(
+                        format!("Section '{}' not found; created at end of page", section_name)
+                    );
+                }
+
+                response.to_string()
+            }
+
+            other => serde_json::json!({
+                "error": format!("Unknown write mode: '{other}'")
+            })
+            .to_string(),
+        }
     }
 
     /// Ingest source material into raw/. After ingesting, use wiki_write to create the corresponding wiki page.
