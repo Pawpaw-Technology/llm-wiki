@@ -1,0 +1,19 @@
+# Clean Linux env to smoke-test the installer end-to-end.
+# Build: docker build -f installer/Dockerfile.test-linux -t lw-installer-test .
+# Run:   docker run --rm -e LW_VERSION=v0.2.0 lw-installer-test
+
+FROM ubuntu:24.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl ca-certificates tar gzip coreutils && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m tester
+USER tester
+WORKDIR /home/tester
+
+COPY --chown=tester:tester installer/test-install.sh /home/tester/test-install.sh
+RUN chmod +x /home/tester/test-install.sh
+
+ENTRYPOINT ["/home/tester/test-install.sh"]
