@@ -79,8 +79,8 @@ Tool is open source; wiki content repos are private (BYO).
 
 ## Status
 
-- 1.0: Claude Code (full), Codex (skills + manual MCP), OpenClaw (skill-only)
-- 1.1 roadmap: Codex MCP wiring, OpenClaw MCP wiring, `llm-wiki:curate` skill, more templates
+- 1.0: Claude Code (full MCP + skills), Codex (skills only), OpenClaw (skills only)
+- 1.1 roadmap: Codex auto-MCP wiring, OpenClaw auto-MCP wiring, `llm-wiki:curate` skill, more templates
 
 ## License
 
