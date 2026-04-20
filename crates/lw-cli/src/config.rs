@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Config {
@@ -19,10 +21,6 @@ pub struct WorkspaceState {
 pub struct WorkspaceEntry {
     pub path: PathBuf,
 }
-
-use std::fs;
-use std::io;
-use std::path::Path;
 
 /// Default location: $LW_HOME/config.toml, where LW_HOME falls back to ~/.llm-wiki/.
 pub fn config_path() -> anyhow::Result<PathBuf> {
