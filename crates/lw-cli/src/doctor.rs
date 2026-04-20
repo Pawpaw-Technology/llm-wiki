@@ -495,6 +495,9 @@ mod tests {
         let exe = std::env::current_exe().unwrap();
         let stem = exe.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         if stem != "lw" {
+            eprintln!(
+                "SKIPPED: check_serve_smoke_passes_with_real_binary requires running the lw binary directly (use the doctor_cli e2e test instead)"
+            );
             return;
         }
         let r = check_serve_smoke();

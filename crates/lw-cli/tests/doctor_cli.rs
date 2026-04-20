@@ -79,3 +79,33 @@ path = "/does/not/exist/abc123"
         .failure()
         .stdout(predicate::str::contains("path does not exist"));
 }
+
+#[test]
+#[serial_test::serial]
+fn doctor_serve_smoke_passes_via_cargo_bin() {
+    let home = TempDir::new().unwrap();
+    // Stage minimal install so doctor doesn't fail on other checks
+    std::fs::create_dir_all(home.path().join("integrations")).unwrap();
+    std::fs::create_dir_all(home.path().join("skills/llm-wiki-import")).unwrap();
+    std::fs::write(
+        home.path().join("skills/llm-wiki-import/SKILL.md"),
+        "---\nname: llm-wiki:import\n---\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join("version"),
+        format!(
+            "binary = \"{}\"\nassets = \"{}\"\ninstalled_at = \"now\"\n",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+    .unwrap();
+
+    lw(home.path())
+        .args(["doctor"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lw serve smoke"))
+        .stdout(predicate::str::contains("starts and stays up"));
+}
