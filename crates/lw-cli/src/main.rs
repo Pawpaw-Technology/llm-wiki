@@ -11,6 +11,7 @@ mod read;
 mod serve;
 mod status;
 mod templates;
+mod upgrade;
 mod version_file;
 mod workspace;
 mod write;
@@ -208,6 +209,17 @@ enum Commands {
         /// Reverse the integration
         #[arg(long)]
         uninstall: bool,
+    },
+
+    /// Check for or apply a newer llm-wiki release
+    #[command(after_help = "Examples:\n  lw upgrade --check\n  lw upgrade\n  lw upgrade --yes")]
+    Upgrade {
+        /// Only check; do not download/replace
+        #[arg(long)]
+        check: bool,
+        /// Pass --yes to the installer (auto-integrate)
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 
@@ -429,6 +441,13 @@ fn main() {
         } => {
             let target = if auto { None } else { tool.as_deref() };
             integrate::run(target, integrate::IntegrateOpts { yes, uninstall })
+        }
+        Commands::Upgrade { check, yes } => {
+            if check {
+                upgrade::check()
+            } else {
+                upgrade::apply(yes)
+            }
         }
     };
 

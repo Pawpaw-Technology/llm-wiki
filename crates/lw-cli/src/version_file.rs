@@ -33,6 +33,9 @@ impl VersionFile {
         }
     }
 
+    // Used by `lw doctor` in Plan D; scaffolded here so the installer can
+    // write metadata without a second edit pass later.
+    #[allow(dead_code)]
     pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -42,6 +45,8 @@ impl VersionFile {
         Ok(())
     }
 
+    // Used by `lw doctor` in Plan D.
+    #[allow(dead_code)]
     pub fn is_compatible(&self) -> bool {
         !self.binary.is_empty() && self.binary == self.assets
     }
