@@ -67,7 +67,7 @@ pub fn run(target: Option<&str>, opts: IntegrateOpts) -> anyhow::Result<()> {
 }
 
 fn install_one(id: &str, desc: &Descriptor) -> anyhow::Result<()> {
-    println!("Installing integration: {} ({id})", desc.name);
+    println!("Installing {} ({id})", desc.name);
 
     if let Some(mcp_cfg) = &desc.mcp {
         if mcp_cfg.format != McpFormat::Json {
@@ -124,7 +124,7 @@ fn install_one(id: &str, desc: &Descriptor) -> anyhow::Result<()> {
 }
 
 fn uninstall_one(id: &str, desc: &Descriptor) -> anyhow::Result<()> {
-    println!("Uninstalling integration: {} ({id})", desc.name);
+    println!("Uninstalling {} ({id})", desc.name);
 
     if let Some(mcp_cfg) = &desc.mcp {
         let path = expand_tilde(&mcp_cfg.config_path);
