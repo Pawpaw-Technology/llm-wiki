@@ -1,7 +1,7 @@
 use crate::config::{Config, config_path};
 use crate::integrations::{
     descriptor::{Descriptor, McpConfig, SkillsConfig, expand_tilde},
-    load_all, mcp,
+    integrations_root, load_all, mcp,
 };
 use crate::version_file::{CURRENT_BINARY_VERSION, VersionFile, version_file_path};
 use serde_json::Value;
@@ -235,6 +235,25 @@ fn check_version_compat() -> CheckResult {
 
 fn check_integrations() -> Vec<CheckResult> {
     let mut out = Vec::new();
+    match integrations_root() {
+        Ok(r) if r.exists() => {}
+        Ok(r) => {
+            out.push(CheckResult::warn(
+                "integrations",
+                format!("integrations dir not found at {}", r.display()),
+                "run `lw upgrade` (or reinstall via curl install.sh) to restore",
+            ));
+            return out;
+        }
+        Err(e) => {
+            out.push(CheckResult::warn(
+                "integrations",
+                format!("cannot resolve integrations dir: {e}"),
+                "set $LW_HOME or reinstall",
+            ));
+            return out;
+        }
+    }
     let descriptors = match load_all() {
         Ok(d) => d,
         Err(e) => {
