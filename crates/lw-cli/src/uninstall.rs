@@ -7,15 +7,9 @@ pub struct UninstallOpts {
 }
 
 pub fn run(opts: UninstallOpts) -> anyhow::Result<()> {
-    let prefix = std::env::var("LW_INSTALL_PREFIX").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .map(|h| h.join(".llm-wiki").display().to_string())
-            .unwrap_or_else(|| "$HOME/.llm-wiki".into())
-    });
+    let prefix = crate::install_prefix::install_prefix();
 
-    let script = std::path::PathBuf::from(&prefix)
-        .join("installer")
-        .join("uninstall.sh");
+    let script = prefix.join("installer").join("uninstall.sh");
     if !script.exists() {
         anyhow::bail!(
             "uninstall script not found at {} — manual cleanup required (rm -rf ~/.llm-wiki and strip PATH marker)",

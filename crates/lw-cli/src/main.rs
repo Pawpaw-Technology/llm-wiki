@@ -2,6 +2,7 @@ mod config;
 mod import;
 mod ingest;
 mod init;
+mod install_prefix;
 mod integrate;
 mod integrations;
 mod lint;

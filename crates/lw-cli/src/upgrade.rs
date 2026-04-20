@@ -1,4 +1,4 @@
-use crate::version_file::{CURRENT_BINARY_VERSION, VersionFile, version_file_path};
+use crate::version_file::{version_file_path, VersionFile, CURRENT_BINARY_VERSION};
 use serde::Deserialize;
 use std::process::Command;
 
@@ -30,15 +30,9 @@ pub fn check() -> anyhow::Result<()> {
 }
 
 pub fn apply(yes: bool) -> anyhow::Result<()> {
-    let prefix = std::env::var("LW_INSTALL_PREFIX").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .map(|h| h.join(".llm-wiki").display().to_string())
-            .unwrap_or_else(|| "$HOME/.llm-wiki".into())
-    });
+    let prefix = crate::install_prefix::install_prefix();
 
-    let installer = std::path::PathBuf::from(&prefix)
-        .join("installer")
-        .join("install.sh");
+    let installer = prefix.join("installer").join("install.sh");
     if !installer.exists() {
         anyhow::bail!(
             "installer not found at {} — re-run the curl install command from the README",
