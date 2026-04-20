@@ -1,4 +1,5 @@
 mod config;
+mod doctor;
 mod import;
 mod ingest;
 mod init;
