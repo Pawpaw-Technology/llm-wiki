@@ -1,4 +1,4 @@
-use crate::config::{config_path, Config, WorkspaceEntry};
+use crate::config::{Config, WorkspaceEntry, config_path};
 use std::path::{Path, PathBuf};
 
 /// Validate workspace name: lowercase alphanumeric + dashes, 1-32 chars.
@@ -106,10 +106,7 @@ pub fn current(verbose: bool) -> anyhow::Result<()> {
     if verbose {
         println!();
         println!("Resolution chain (--root > LW_WIKI_ROOT env > current workspace > cwd):");
-        println!(
-            "  --root flag:        {}",
-            "(only available at command time)"
-        );
+        println!("  --root flag:        (only available at command time)");
         println!(
             "  LW_WIKI_ROOT env:   {}",
             std::env::var("LW_WIKI_ROOT").unwrap_or_else(|_| "(unset)".into())
