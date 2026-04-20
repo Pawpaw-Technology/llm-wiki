@@ -204,7 +204,7 @@ elif [ "$IS_TTY" -eq 1 ]; then
   # Detect available tools, suggest commands
   AVAIL=""
   for d in "$HOME/.claude" "$HOME/.codex" "$HOME/.openclaw"; do
-    [ -d "$d" ] && AVAIL="${AVAIL} $(basename "$d" | sed 's/^.//')"
+    [ -d "$d" ] && AVAIL="${AVAIL} $(basename "$d" | sed 's/^\.//')"
   done
   AVAIL=$(echo "$AVAIL" | sed 's/^ //')
   if [ -n "$AVAIL" ]; then
