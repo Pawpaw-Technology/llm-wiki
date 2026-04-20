@@ -1,4 +1,4 @@
-use crate::config::{Config, WorkspaceEntry, config_path};
+use crate::config::{config_path, Config, WorkspaceEntry};
 use std::path::{Path, PathBuf};
 
 /// Validate workspace name: lowercase alphanumeric + dashes, 1-32 chars.
@@ -94,6 +94,19 @@ pub fn current(verbose: bool) -> anyhow::Result<()> {
         Some(name) => match cfg.workspaces.get(name) {
             Some(entry) => {
                 println!("{name}\t{}", entry.path.display());
+                // If the registered entry's path no longer exists, this is
+                // the loudest diagnostic command — warn unconditionally so
+                // users can see it in both verbose and non-verbose mode.
+                // `resolve_root` already converts this into an actionable
+                // error for subcommands like `lw status`; surface the same
+                // signal from `workspace current` so users discover it
+                // without having to trip another command first.
+                if !entry.path.exists() {
+                    eprintln!(
+                        "warning: current workspace '{name}' path {} does not exist",
+                        entry.path.display()
+                    );
+                }
             }
             None => {
                 // Demoted from anyhow::bail!: keep going so `lw workspace

@@ -202,3 +202,37 @@ fn current_verbose_warns_but_continues_when_table_missing_entry() {
         .stdout(predicate::str::contains("Resolution chain"))
         .stdout(predicate::str::contains("(missing entry)"));
 }
+
+#[test]
+#[serial_test::serial]
+fn current_verbose_warns_when_registered_path_missing() {
+    // Register a workspace pointing at a temp dir, then drop it so the path
+    // no longer exists on disk. `lw workspace current -v` should warn on
+    // stderr but still succeed (exit 0) — it's a diagnostic command and the
+    // user needs to see the resolution chain to debug.
+    let home = TempDir::new().unwrap();
+    let vault = TempDir::new().unwrap();
+    let vault_path = vault.path().to_path_buf();
+
+    lw(home.path())
+        .args([
+            "workspace",
+            "add",
+            "gone",
+            vault_path.to_str().unwrap(),
+            "--init",
+        ])
+        .assert()
+        .success();
+
+    drop(vault);
+    assert!(!vault_path.exists(), "vault must be gone for the test");
+
+    lw(home.path())
+        .args(["workspace", "current", "-v"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("gone"))
+        .stderr(predicate::str::contains("does not exist"))
+        .stdout(predicate::str::contains("Resolution chain"));
+}
