@@ -1,4 +1,4 @@
-use crate::integrations::descriptor::{expand_tilde, SkillsConfig, SkillsMode};
+use crate::integrations::descriptor::{SkillsConfig, SkillsMode, expand_tilde};
 use std::path::{Path, PathBuf};
 
 pub fn skills_root() -> anyhow::Result<PathBuf> {
