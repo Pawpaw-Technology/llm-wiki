@@ -1,4 +1,4 @@
-use crate::config::{config_path, Config, WorkspaceEntry};
+use crate::config::{Config, WorkspaceEntry, config_path};
 use std::path::{Path, PathBuf};
 
 /// Validate workspace name: lowercase alphanumeric + dashes, 1-32 chars.

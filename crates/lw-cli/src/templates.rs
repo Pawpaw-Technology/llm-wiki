@@ -45,10 +45,10 @@ pub fn list_available() -> anyhow::Result<Vec<String>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&root)? {
         let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            if let Some(name) = entry.file_name().to_str() {
-                out.push(name.to_string());
-            }
+        if entry.file_type()?.is_dir()
+            && let Some(name) = entry.file_name().to_str()
+        {
+            out.push(name.to_string());
         }
     }
     out.sort();
@@ -140,10 +140,11 @@ mod tests {
 
         assert!(dest.path().join("vault/.lw/schema.toml").exists());
         assert!(dest.path().join("vault/SCOPE.md").exists());
-        assert!(dest
-            .path()
-            .join("vault/wiki/_uncategorized/welcome.md")
-            .exists());
+        assert!(
+            dest.path()
+                .join("vault/wiki/_uncategorized/welcome.md")
+                .exists()
+        );
         assert!(dest.path().join("vault/raw").exists());
         // .gitkeep must NOT be copied
         assert!(!dest.path().join("vault/raw/.gitkeep").exists());

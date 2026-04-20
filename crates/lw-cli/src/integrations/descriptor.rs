@@ -46,14 +46,15 @@ pub enum SkillsMode {
 
 /// Tilde-expand a path string. `~` and `~/` resolve to $HOME.
 pub fn expand_tilde(s: &str) -> PathBuf {
-    if let Some(stripped) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
-    } else if s == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
+    if let Some(stripped) = s.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(stripped);
+    }
+    if s == "~"
+        && let Some(home) = dirs::home_dir()
+    {
+        return home;
     }
     PathBuf::from(s)
 }

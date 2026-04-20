@@ -1,4 +1,4 @@
-use crate::integrations::descriptor::{expand_tilde, SkillsConfig, SkillsMode};
+use crate::integrations::descriptor::{SkillsConfig, SkillsMode, expand_tilde};
 use std::path::{Path, PathBuf};
 
 pub fn skills_root() -> anyhow::Result<PathBuf> {
@@ -34,8 +34,21 @@ pub fn skills_root() -> anyhow::Result<PathBuf> {
     anyhow::bail!("Cannot locate skills directory")
 }
 
+/// Normalise trailing-slash targets. `/foo/bar/` is legal in config but causes
+/// `symlink(2)` and a few other syscalls to fail with ENOENT because they
+/// treat the trailing slash as requiring an existing directory. Rebuild the
+/// path from its `components()` which drop trailing separators.
+fn normalise_target(p: PathBuf) -> PathBuf {
+    let rebuilt: PathBuf = p.components().collect();
+    if rebuilt.as_os_str().is_empty() {
+        p
+    } else {
+        rebuilt
+    }
+}
+
 pub fn install(cfg: &SkillsConfig) -> anyhow::Result<PathBuf> {
-    let target = expand_tilde(&cfg.target_dir);
+    let target = normalise_target(expand_tilde(&cfg.target_dir));
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -62,7 +75,7 @@ pub fn install(cfg: &SkillsConfig) -> anyhow::Result<PathBuf> {
 }
 
 pub fn uninstall(cfg: &SkillsConfig) -> anyhow::Result<bool> {
-    let target = expand_tilde(&cfg.target_dir);
+    let target = normalise_target(expand_tilde(&cfg.target_dir));
     if !target.exists() && target.symlink_metadata().is_err() {
         return Ok(false);
     }
