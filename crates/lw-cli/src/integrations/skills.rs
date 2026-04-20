@@ -1,4 +1,4 @@
-use crate::integrations::descriptor::{SkillsConfig, SkillsMode, expand_tilde};
+use crate::integrations::descriptor::{expand_tilde, SkillsConfig, SkillsMode};
 use std::path::{Path, PathBuf};
 
 pub fn skills_root() -> anyhow::Result<PathBuf> {
@@ -175,6 +175,22 @@ mod tests {
         unsafe { std::env::remove_var("LW_SKILLS_DIR") };
         assert!(removed);
         assert!(!target_dir.path().join("llm-wiki").exists());
+    }
+
+    #[test]
+    fn normalise_target_strips_trailing_slash() {
+        assert_eq!(
+            normalise_target(std::path::PathBuf::from("/foo/bar/")),
+            std::path::PathBuf::from("/foo/bar"),
+        );
+    }
+
+    #[test]
+    fn normalise_target_idempotent_on_clean_path() {
+        assert_eq!(
+            normalise_target(std::path::PathBuf::from("/foo/bar")),
+            std::path::PathBuf::from("/foo/bar"),
+        );
     }
 
     #[test]
