@@ -113,6 +113,59 @@ fn duplicate_add_fails() {
 
 #[test]
 #[serial_test::serial]
+fn duplicate_path_different_name_fails() {
+    // Two visibly-different paths can resolve to the same physical
+    // directory: on macOS/Linux `/tmp` is a symlink to `/private/tmp`, so
+    // `/tmp/wp` and `/private/tmp/wp` point at the same place. Registering
+    // both under different names was a footgun — the fix canonicalizes
+    // non-existent paths via their closest existing ancestor, so the
+    // duplicate-path check catches this case.
+    let home = TempDir::new().unwrap();
+
+    // Use a unique subdir under /tmp to avoid cross-test collisions.
+    let unique = format!(
+        "lw-dup-symlink-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let via_tmp = std::path::PathBuf::from("/tmp").join(&unique);
+    let via_private_tmp = std::path::PathBuf::from("/private/tmp").join(&unique);
+
+    // Guard: if this OS doesn't canonicalize /tmp to /private/tmp (e.g.
+    // non-macOS Linux without that symlink), skip rather than false-fail.
+    let tmp_canon = std::path::PathBuf::from("/tmp")
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+    if tmp_canon != std::path::Path::new("/private/tmp") {
+        eprintln!("skipping: /tmp does not canonicalize to /private/tmp on this OS");
+        return;
+    }
+
+    // Ensure neither path exists from a previous failed run.
+    let _ = std::fs::remove_dir_all(&via_private_tmp);
+
+    lw(home.path())
+        .args(["workspace", "add", "a", via_tmp.to_str().unwrap(), "--init"])
+        .assert()
+        .success();
+
+    lw(home.path())
+        .args(["workspace", "add", "b", via_private_tmp.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "already registered as workspace 'a'",
+        ));
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&via_private_tmp);
+}
+
+#[test]
+#[serial_test::serial]
 fn invalid_name_fails() {
     let home = TempDir::new().unwrap();
     let vault = TempDir::new().unwrap();

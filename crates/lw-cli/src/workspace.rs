@@ -1,4 +1,4 @@
-use crate::config::{config_path, Config, WorkspaceEntry};
+use crate::config::{Config, WorkspaceEntry, config_path};
 use std::path::{Path, PathBuf};
 
 /// Validate workspace name: lowercase alphanumeric + dashes, 1-32 chars.
@@ -15,14 +15,21 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolve to absolute path; canonicalize if it exists, else absolute-ize.
+/// Resolve to absolute path; canonicalize when possible, even for paths that
+/// don't yet exist. Walks up to the closest existing ancestor, canonicalizes
+/// that, and re-appends the missing tail. This gives `/tmp/wp` and
+/// `/private/tmp/wp` the same identity on macOS (where `/tmp` is a symlink
+/// to `/private/tmp`), so the duplicate-path check in `add` can catch them.
 fn resolve_path(path: &Path) -> anyhow::Result<PathBuf> {
-    if path.exists() {
-        Ok(path.canonicalize()?)
-    } else if path.is_absolute() {
-        Ok(path.to_path_buf())
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        Ok(std::env::current_dir()?.join(path))
+        std::env::current_dir()?.join(path)
+    };
+    if abs.exists() {
+        Ok(abs.canonicalize()?)
+    } else {
+        Ok(lw_core::fs::canonicalize_ancestor(&abs))
     }
 }
 
@@ -35,6 +42,27 @@ pub fn add(name: &str, path: &Path, init: bool) -> anyhow::Result<()> {
 
     if cfg.workspaces.contains_key(name) {
         anyhow::bail!("workspace '{name}' already exists");
+    }
+
+    // Catch the case where two visibly-different paths point at the same
+    // physical directory (e.g. `/tmp/wp` vs `/private/tmp/wp` on macOS).
+    // `resolve_path` canonicalizes missing paths via their closest existing
+    // ancestor, so the comparison is symlink-safe.
+    for (other_name, entry) in &cfg.workspaces {
+        let other_canon = if entry.path.exists() {
+            entry
+                .path
+                .canonicalize()
+                .unwrap_or_else(|_| entry.path.clone())
+        } else {
+            lw_core::fs::canonicalize_ancestor(&entry.path)
+        };
+        if other_canon == abs {
+            anyhow::bail!(
+                "path {} is already registered as workspace '{other_name}'",
+                abs.display()
+            );
+        }
     }
 
     if init {
@@ -309,10 +337,13 @@ mod crud_tests {
     #[serial_test::serial]
     fn use_sets_current() {
         let home = TempDir::new().unwrap();
-        let v = TempDir::new().unwrap();
+        // Two separate dirs — registering the same path under two names is
+        // now (correctly) rejected by the duplicate-path check in `add`.
+        let v_a = TempDir::new().unwrap();
+        let v_b = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
-            add("a", v.path(), false).unwrap();
-            add("b", v.path(), false).unwrap();
+            add("a", v_a.path(), false).unwrap();
+            add("b", v_b.path(), false).unwrap();
             use_("b").unwrap();
             let cfg = Config::load_from(&config_path().unwrap()).unwrap();
             assert_eq!(cfg.workspace.current.as_deref(), Some("b"));
