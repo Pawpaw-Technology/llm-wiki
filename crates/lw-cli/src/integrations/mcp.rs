@@ -69,16 +69,6 @@ pub fn merge_entry(
             let existing_ver = existing.get(VERSION_MARKER).and_then(|v| v.as_str());
             match (existing_ver, expected_prev_version) {
                 (Some(ev), Some(pv)) if ev == pv => {
-                    // Clean upgrade. Entry is required to include VERSION_MARKER
-                    // (we bailed upstream otherwise), but be defensive and fall
-                    // back to "unknown" if the shape somehow drifted.
-                    let new_ver = entry
-                        .get(VERSION_MARKER)
-                        .cloned()
-                        .unwrap_or_else(|| Value::String("unknown".into()));
-                    if let Some(obj_entry) = entry.as_object_mut() {
-                        obj_entry.insert(VERSION_MARKER.into(), new_ver);
-                    }
                     obj.insert((*last).to_string(), entry);
                     Ok(MergeOutcome::Updated)
                 }
