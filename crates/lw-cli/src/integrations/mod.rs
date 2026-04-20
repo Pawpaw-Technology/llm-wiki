@@ -65,9 +65,3 @@ pub fn load_all() -> anyhow::Result<Vec<(String, Descriptor)>> {
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
 }
-
-/// Stubs — populated by Tasks 5-7
-pub struct IntegrateOpts {
-    pub yes: bool,
-    pub interactive: bool,
-}

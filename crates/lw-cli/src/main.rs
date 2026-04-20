@@ -2,6 +2,7 @@ mod config;
 mod import;
 mod ingest;
 mod init;
+mod integrate;
 mod integrations;
 mod lint;
 mod output;
@@ -188,6 +189,24 @@ enum Commands {
     Workspace {
         #[command(subcommand)]
         action: WorkspaceCmd,
+    },
+
+    /// Wire llm-wiki into your agent tool(s)
+    #[command(
+        after_help = "Examples:\n  lw integrate --auto\n  lw integrate claude-code\n  lw integrate claude-code --uninstall\n  lw integrate --auto --yes  # non-interactive"
+    )]
+    Integrate {
+        /// Specific integration id (omit for --auto detection)
+        tool: Option<String>,
+        /// Detect installed tools and prompt per tool
+        #[arg(long, conflicts_with = "tool")]
+        auto: bool,
+        /// Skip prompts (assume yes)
+        #[arg(short, long)]
+        yes: bool,
+        /// Reverse the integration
+        #[arg(long)]
+        uninstall: bool,
     },
 }
 
@@ -401,6 +420,15 @@ fn main() {
             WorkspaceCmd::UseCmd { name } => workspace::use_(&name),
             WorkspaceCmd::Remove { name } => workspace::remove(&name),
         },
+        Commands::Integrate {
+            tool,
+            auto,
+            yes,
+            uninstall,
+        } => {
+            let target = if auto { None } else { tool.as_deref() };
+            integrate::run(target, integrate::IntegrateOpts { yes, uninstall })
+        }
     };
 
     if let Err(e) = result {
