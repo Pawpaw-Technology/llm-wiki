@@ -55,8 +55,19 @@ if [ "$LW_YES" -ne 1 ] && [ -t 0 ]; then
 fi
 
 # --- Step 1: reverse integrations ------------------------------------------
-
-if [ -x "$LW_INSTALL_PREFIX/bin/lw" ] && [ -d "$LW_INSTALL_PREFIX/integrations" ]; then
+#
+# Only reverse integrations when running against the default prefix.
+# `lw integrate --uninstall` resolves agent config paths (~/.claude,
+# ~/.codex, ~/.openclaw) via `dirs::home_dir()`, which is keyed off $HOME
+# regardless of $LW_INSTALL_PREFIX. Under a custom prefix the install
+# side's integrate step was explicitly skipped (install.sh gates on
+# --yes), so the user's real agent configs were never touched — running
+# the reverse loop here would happily delete or edit entries the
+# installer never created.
+default_prefix="${HOME:-}/.llm-wiki"
+if [ "$LW_INSTALL_PREFIX" = "$default_prefix" ] \
+  && [ -x "$LW_INSTALL_PREFIX/bin/lw" ] \
+  && [ -d "$LW_INSTALL_PREFIX/integrations" ]; then
   echo "Reversing integrations..."
   for tool_toml in "$LW_INSTALL_PREFIX/integrations/"*.toml; do
     [ -f "$tool_toml" ] || continue
@@ -67,6 +78,10 @@ if [ -x "$LW_INSTALL_PREFIX/bin/lw" ] && [ -d "$LW_INSTALL_PREFIX/integrations" 
       "$LW_INSTALL_PREFIX/bin/lw" integrate "$tool_id" --uninstall 2>/dev/null || \
       echo "  (skipped $tool_id — not currently installed)"
   done
+elif [ -x "$LW_INSTALL_PREFIX/bin/lw" ] && [ -d "$LW_INSTALL_PREFIX/integrations" ]; then
+  echo "Skipping integration uninstall — custom prefix ($LW_INSTALL_PREFIX)."
+  echo "  (integrations were never written to user config under a custom prefix;"
+  echo "   reversing them would damage pre-existing user agent state)"
 fi
 
 # --- Step 2: remove PATH marker block --------------------------------------
