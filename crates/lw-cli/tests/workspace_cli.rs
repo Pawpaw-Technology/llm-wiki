@@ -138,3 +138,41 @@ fn list_empty_message() {
         .success()
         .stdout(predicate::str::contains("no workspaces registered"));
 }
+
+#[test]
+#[serial_test::serial]
+fn current_workspace_path_missing_yields_actionable_error() {
+    // Register a workspace whose path we then delete out from under it.
+    // resolve_root() must surface a distinct, actionable error rather than
+    // silently falling through to cwd discovery.
+    let home = TempDir::new().unwrap();
+    let vault = TempDir::new().unwrap();
+    let vault_path = vault.path().to_path_buf();
+
+    lw(home.path())
+        .args([
+            "workspace",
+            "add",
+            "ghosted",
+            vault_path.to_str().unwrap(),
+            "--init",
+        ])
+        .assert()
+        .success();
+
+    // Drop the vault TempDir to delete the directory on disk.
+    drop(vault);
+    assert!(!vault_path.exists(), "vault must be gone for the test");
+
+    // Run a non-explicit-root command from a non-wiki cwd. The cwd must
+    // not be inside any wiki ancestor, so use an isolated tempdir.
+    let elsewhere = TempDir::new().unwrap();
+    lw(home.path())
+        .current_dir(elsewhere.path())
+        .args(["status"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ghosted"))
+        .stderr(predicate::str::contains("no longer exists"))
+        .stderr(predicate::str::contains("lw workspace remove ghosted"));
+}

@@ -226,14 +226,27 @@ fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
     if let Some(root) = cli_root {
         return Ok(root);
     }
-    // Try current workspace from ~/.llm-wiki/config.toml
+    // Try current workspace from ~/.llm-wiki/config.toml.
+    // If the user has a current workspace registered but its path is gone
+    // (vault moved/deleted), surface a distinct, actionable error rather
+    // than silently falling through to cwd discovery.
     if let Ok(cfg_path) = config::config_path()
         && let Ok(cfg) = config::Config::load_from(&cfg_path)
         && let Some(name) = &cfg.workspace.current
-        && let Some(entry) = cfg.workspaces.get(name)
-        && entry.path.exists()
     {
-        return Ok(entry.path.clone());
+        if let Some(entry) = cfg.workspaces.get(name) {
+            if entry.path.exists() {
+                return Ok(entry.path.clone());
+            }
+            return Err(format!(
+                "current workspace '{name}' points to {} which no longer exists\n  Run: lw workspace remove {name}  (to forget it)\n  Or restore the directory at {}",
+                entry.path.display(),
+                entry.path.display()
+            ));
+        }
+        // Current is set but the workspaces table has no entry — config
+        // is corrupt. Don't crash here; let cwd discovery still run as a
+        // last resort. workspace::current(verbose) can be used to debug.
     }
     // Final fallback: cwd auto-discover
     let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
