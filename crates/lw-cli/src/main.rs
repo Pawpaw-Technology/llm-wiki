@@ -180,13 +180,24 @@ enum Commands {
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
+    // Priority: --root flag > LW_WIKI_ROOT env (already merged into cli_root by clap) > current workspace > cwd
     if let Some(root) = cli_root {
         return Ok(root);
     }
+    // Try current workspace from ~/.llm-wiki/config.toml
+    if let Ok(cfg_path) = config::config_path()
+        && let Ok(cfg) = config::Config::load_from(&cfg_path)
+        && let Some(name) = &cfg.workspace.current
+        && let Some(entry) = cfg.workspaces.get(name)
+        && entry.path.exists()
+    {
+        return Ok(entry.path.clone());
+    }
+    // Final fallback: cwd auto-discover
     let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
     lw_core::fs::discover_wiki_root(&cwd).ok_or_else(|| {
         format!(
-            "Not a wiki directory (or any parent): {}\n  Run: lw init --root <path>\n  Or set LW_WIKI_ROOT environment variable",
+            "Not a wiki directory (or any parent): {}\n  Run: lw init --root <path>\n  Or: lw workspace add <name> <path> --init\n  Or set LW_WIKI_ROOT environment variable",
             cwd.display()
         )
     })
