@@ -1,9 +1,9 @@
-use crate::config::{config_path, Config};
+use crate::config::{Config, config_path};
 use crate::integrations::{
-    descriptor::{expand_tilde, Descriptor, McpConfig, SkillsConfig},
+    descriptor::{Descriptor, McpConfig, SkillsConfig, expand_tilde},
     integrations_root, load_all, mcp,
 };
-use crate::version_file::{version_file_path, VersionFile, CURRENT_BINARY_VERSION};
+use crate::version_file::{CURRENT_BINARY_VERSION, VersionFile, version_file_path};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
