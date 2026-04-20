@@ -28,7 +28,7 @@ pub enum MergeOutcome {
 pub fn merge_entry(
     config: &mut Value,
     key_path: &str,
-    mut entry: Value,
+    entry: Value,
     expected_prev_version: Option<&str>,
 ) -> anyhow::Result<MergeOutcome> {
     // Ensure entry has a version marker
