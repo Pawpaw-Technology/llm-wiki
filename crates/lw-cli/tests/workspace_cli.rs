@@ -1,0 +1,136 @@
+use assert_cmd::Command;
+use predicates::prelude::*;
+use tempfile::TempDir;
+
+fn lw(home: &std::path::Path) -> Command {
+    let mut cmd = Command::cargo_bin("lw").unwrap();
+    cmd.env("LW_HOME", home);
+    // Clear LW_WIKI_ROOT to keep tests deterministic
+    cmd.env_remove("LW_WIKI_ROOT");
+    cmd
+}
+
+#[test]
+fn full_workspace_lifecycle() {
+    let home = TempDir::new().unwrap();
+    let vault_a = TempDir::new().unwrap();
+    let vault_b = TempDir::new().unwrap();
+
+    // Add first workspace, init the wiki structure
+    lw(home.path())
+        .args([
+            "workspace",
+            "add",
+            "alpha",
+            vault_a.path().to_str().unwrap(),
+            "--init",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added workspace 'alpha'"))
+        .stdout(predicate::str::contains("set as current"));
+
+    assert!(vault_a.path().join(".lw/schema.toml").exists());
+
+    // Add second
+    lw(home.path())
+        .args([
+            "workspace",
+            "add",
+            "beta",
+            vault_b.path().to_str().unwrap(),
+            "--init",
+        ])
+        .assert()
+        .success();
+
+    // List shows both, alpha marked current
+    lw(home.path())
+        .args(["workspace", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("* alpha"))
+        .stdout(predicate::str::contains("  beta"));
+
+    // Current prints alpha
+    lw(home.path())
+        .args(["workspace", "current"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alpha"));
+
+    // Switch to beta
+    lw(home.path())
+        .args(["workspace", "use", "beta"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Current workspace set to 'beta'"))
+        .stdout(predicate::str::contains("Restart your agent"));
+
+    // Verbose current shows resolution chain
+    lw(home.path())
+        .args(["workspace", "current", "-v"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Resolution chain"))
+        .stdout(predicate::str::contains("LW_WIKI_ROOT env"))
+        .stdout(predicate::str::contains("current workspace"));
+
+    // Remove beta clears current
+    lw(home.path())
+        .args(["workspace", "remove", "beta"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed workspace 'beta'"));
+
+    lw(home.path())
+        .args(["workspace", "current"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(no current workspace)"));
+
+    // Vault directories must remain on disk
+    assert!(vault_a.path().exists());
+    assert!(vault_b.path().exists());
+}
+
+#[test]
+fn duplicate_add_fails() {
+    let home = TempDir::new().unwrap();
+    let vault = TempDir::new().unwrap();
+    lw(home.path())
+        .args(["workspace", "add", "x", vault.path().to_str().unwrap()])
+        .assert()
+        .success();
+    lw(home.path())
+        .args(["workspace", "add", "x", vault.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+}
+
+#[test]
+fn invalid_name_fails() {
+    let home = TempDir::new().unwrap();
+    let vault = TempDir::new().unwrap();
+    lw(home.path())
+        .args([
+            "workspace",
+            "add",
+            "BadName",
+            vault.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("lowercase"));
+}
+
+#[test]
+fn list_empty_message() {
+    let home = TempDir::new().unwrap();
+    lw(home.path())
+        .args(["workspace", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("no workspaces registered"));
+}
