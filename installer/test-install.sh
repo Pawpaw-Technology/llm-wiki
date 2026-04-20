@@ -9,7 +9,7 @@ LW_VERSION="${LW_VERSION:-latest}"
 LW_REPO="${LW_REPO:-Pawpaw-Technology/llm-wiki}"
 
 echo "=== Test 1: install + verify binary present ==="
-curl -fsSL "https://github.com/${LW_REPO}/releases/${LW_VERSION#v}/download/install.sh" \
+curl -fsSL "https://github.com/${LW_REPO}/releases/download/${LW_VERSION}/install.sh" \
   > /tmp/install.sh 2>/dev/null \
   || curl -fsSL "https://github.com/${LW_REPO}/releases/latest/download/install.sh" > /tmp/install.sh
 sh /tmp/install.sh --no-integrate
