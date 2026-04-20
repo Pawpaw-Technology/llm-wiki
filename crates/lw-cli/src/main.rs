@@ -240,6 +240,12 @@ enum Commands {
         #[arg(long)]
         purge: bool,
     },
+
+    /// Diagnose installation health (config, integrations, MCP, version skew)
+    #[command(
+        after_help = "Examples:\n  lw doctor\n  # Exit 1 if any check fails; suitable for CI."
+    )]
+    Doctor,
 }
 
 #[derive(clap::Subcommand)]
@@ -477,6 +483,7 @@ fn main() {
             keep_config,
             purge,
         }),
+        Commands::Doctor => doctor::run(),
     };
 
     if let Err(e) = result {

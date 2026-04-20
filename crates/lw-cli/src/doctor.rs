@@ -61,12 +61,13 @@ impl CheckResult {
 }
 
 pub fn run() -> anyhow::Result<()> {
-    let mut results = Vec::new();
-    results.push(check_binary());
-    results.push(check_path_env());
-    results.push(check_config_loadable());
-    results.push(check_current_workspace());
-    results.push(check_version_compat());
+    let mut results = vec![
+        check_binary(),
+        check_path_env(),
+        check_config_loadable(),
+        check_current_workspace(),
+        check_version_compat(),
+    ];
     results.extend(check_integrations());
     results.push(check_serve_smoke());
 
