@@ -1,0 +1,33 @@
+Fetching lw-aarch64-darwin.tar.gz from https://github.com/Pawpaw-Technology/llm-wiki/releases/latest/download...
+  sha256 ok
+Installed lw 0.2.0-rc.1 to /tmp/lw-smoke-prefix
+  PATH appended to /Users/vergil/.zshrc
+install exit: 0
+Added workspace 'demo' at /private/tmp/lw-smoke-vault
+  initialized from template 'general'
+  set as current (first workspace)
+workspace add exit: 0
+---
+/tmp/lw-smoke-prefix/skills/llm-wiki-import/SKILL.md
+skill md exit: 0
+Error: TOML parse error: TOML parse error at line 1, column 1
+  |
+1 | [tags]
+  | ^
+missing field `wiki`
+
+ingest exit: 0
+---
+ls: /tmp/lw-smoke-vault/raw/articles/: No such file or directory
+Reversing integrations...
+Uninstalling Claude Code (claude-code)
+  MCP entry not present at /Users/vergil/.claude/settings.json
+Uninstalling Codex (codex)
+Uninstalling OpenClaw (openclaw)
+  PATH marker removed from /Users/vergil/.zshrc
+  config saved to /Users/vergil/.llm-wiki.config.toml.bak.1776682388
+  removed /tmp/lw-smoke-prefix
+
+Uninstall complete.
+Vault directories were NOT touched. Check ~/.llm-wiki.config.toml.bak.* if you want to re-register.
+uninstall exit: 0

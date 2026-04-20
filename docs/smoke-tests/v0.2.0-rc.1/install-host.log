@@ -1,0 +1,45 @@
+Fetching lw-aarch64-darwin.tar.gz from https://github.com/Pawpaw-Technology/llm-wiki/releases/latest/download...
+  sha256 ok
+Installed lw 0.2.0-rc.1 to /tmp/lw-smoke-prefix
+  PATH appended to /Users/vergil/.zshrc
+install exit: 0
+lw 0.2.0-rc.1
+version exit: 0
+lw doctor
+=========
+✓ binary location
+    /tmp/lw-smoke-prefix/bin/lw (v0.2.0-rc.1)
+⚠ PATH includes lw bin
+    /Users/vergil/.llm-wiki/bin not in PATH
+    → open a new shell, or `source ~/.zshrc` (or your rc file)
+✓ config.toml
+    /tmp/lw-smoke-prefix/config.toml (not present — single-vault mode)
+✓ current workspace
+    (none — using cwd auto-discover)
+✓ binary/assets version
+    both at 0.2.0-rc.1
+⚠ integration: claude-code (MCP)
+    mcpServers.llm-wiki entry version=0.1.0 (current lw is 0.2.0-rc.1)
+    → `lw integrate claude-code` to refresh
+✓ integration: claude-code (skills)
+    /Users/vergil/.claude/skills/llm-wiki/
+⚠ integration: codex (skills)
+    /Users/vergil/.codex/skills/llm-wiki/ missing
+    → `lw integrate codex` to install
+⚠ integration: openclaw (skills)
+    /Users/vergil/.openclaw/skills/llm-wiki/ missing
+    → `lw integrate openclaw` to install
+✓ lw serve smoke
+    starts and stays up for 200ms
+---
+6 passed, 4 warned, 0 failed
+doctor exit: 0
+Added workspace 'demo' at /private/tmp/lw-smoke-vault
+  initialized from template 'general'
+  set as current (first workspace)
+workspace add exit: 0
+raw
+SCOPE.md
+wiki
+lw 0.2.0-rc.1 is up to date.
+upgrade --check exit: 0

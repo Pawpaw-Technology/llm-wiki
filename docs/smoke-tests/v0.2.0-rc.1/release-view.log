@@ -1,0 +1,33 @@
+title:	v0.2.0-rc.1
+tag:	v0.2.0-rc.1
+draft:	false
+prerelease:	false
+immutable:	false
+author:	github-actions[bot]
+created:	2026-04-20T10:39:12Z
+published:	2026-04-20T10:43:55Z
+url:	https://github.com/Pawpaw-Technology/llm-wiki/releases/tag/v0.2.0-rc.1
+asset:	install.sh
+asset:	install.sh.sha256
+asset:	lw-aarch64-darwin.tar.gz
+asset:	lw-aarch64-darwin.tar.gz.sha256
+asset:	lw-aarch64-linux.tar.gz
+asset:	lw-aarch64-linux.tar.gz.sha256
+asset:	lw-x86_64-darwin.tar.gz
+asset:	lw-x86_64-darwin.tar.gz.sha256
+asset:	lw-x86_64-linux.tar.gz
+asset:	lw-x86_64-linux.tar.gz.sha256
+asset:	uninstall.sh
+asset:	uninstall.sh.sha256
+--
+## What's Changed
+* feat(sre): observability, CI pipeline, and status command by @64andrewwalker in https://github.com/Pawpaw-Technology/llm-wiki/pull/8
+* feat(devops): CI/CD, Docker, test harness with concurrent stress tests by @64andrewwalker in https://github.com/Pawpaw-Technology/llm-wiki/pull/9
+* refactor: simplify — dedup, dead code, fix errors by @64andrewwalker in https://github.com/Pawpaw-Technology/llm-wiki/pull/27
+* ci: notify mono repo on submodule update by @64andrewwalker in https://github.com/Pawpaw-Technology/llm-wiki/pull/33
+* feat: wiki_write section-level operations (#35) by @64andrewwalker in https://github.com/Pawpaw-Technology/llm-wiki/pull/43
+
+## New Contributors
+* @64andrewwalker made their first contribution in https://github.com/Pawpaw-Technology/llm-wiki/pull/8
+
+**Full Changelog**: https://github.com/Pawpaw-Technology/llm-wiki/commits/v0.2.0-rc.1

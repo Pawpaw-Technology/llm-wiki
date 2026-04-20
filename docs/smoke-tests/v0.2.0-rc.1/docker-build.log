@@ -1,0 +1,20 @@
+#0 building with "orbstack" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.test-linux
+#1 transferring dockerfile: 900B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/ubuntu:24.04
+#2 ERROR: failed to authorize: failed to fetch anonymous token: Get "https://auth.docker.io/token?scope=repository%3Alibrary%2Fubuntu%3Apull&service=registry.docker.io": Service Unavailable
+------
+ > [internal] load metadata for docker.io/library/ubuntu:24.04:
+------
+Dockerfile.test-linux:5
+--------------------
+   3 |     # Run:   docker run --rm -e LW_VERSION=v0.2.0 lw-installer-test
+   4 |     
+   5 | >>> FROM ubuntu:24.04
+   6 |     
+   7 |     RUN apt-get update && \
+--------------------
+ERROR: failed to build: failed to solve: failed to fetch anonymous token: Get "https://auth.docker.io/token?scope=repository%3Alibrary%2Fubuntu%3Apull&service=registry.docker.io": Service Unavailable
