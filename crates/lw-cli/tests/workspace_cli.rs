@@ -289,3 +289,63 @@ fn current_verbose_warns_when_registered_path_missing() {
         .stderr(predicate::str::contains("does not exist"))
         .stdout(predicate::str::contains("Resolution chain"));
 }
+
+/// Regression for v0.2.0-rc.1 smoke-gate blocker B1: the bundled templates
+/// shipped with `.lw/schema.toml` files that lacked the `[wiki]` section,
+/// so vaults created from them failed to load on every subsequent command.
+/// These tests exercise the full end-to-end path for each template: copy
+/// from the repo's `templates/` dir via `workspace add --template <t>`,
+/// then run `status --root <vault>` and assert exit 0.
+fn repo_templates_dir() -> std::path::PathBuf {
+    // CARGO_MANIFEST_DIR is <repo>/crates/lw-cli at test time.
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("templates")
+}
+
+fn assert_template_produces_loadable_wiki(template: &str) {
+    let home = TempDir::new().unwrap();
+    let vault = TempDir::new().unwrap();
+    let templates = repo_templates_dir();
+
+    lw(home.path())
+        .env("LW_TEMPLATES_DIR", &templates)
+        .args([
+            "workspace",
+            "add",
+            "demo",
+            vault.path().to_str().unwrap(),
+            "--template",
+            template,
+        ])
+        .assert()
+        .success();
+
+    // If the schema is malformed, every read path blows up. `status` is
+    // the cheapest one that exercises `load_schema`.
+    lw(home.path())
+        .args(["status", "--root", vault.path().to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+#[serial_test::serial]
+fn workspace_add_template_general_produces_loadable_wiki() {
+    assert_template_produces_loadable_wiki("general");
+}
+
+#[test]
+#[serial_test::serial]
+fn workspace_add_template_research_papers_produces_loadable_wiki() {
+    assert_template_produces_loadable_wiki("research-papers");
+}
+
+#[test]
+#[serial_test::serial]
+fn workspace_add_template_engineering_notes_produces_loadable_wiki() {
+    assert_template_produces_loadable_wiki("engineering-notes");
+}
