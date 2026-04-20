@@ -1,4 +1,4 @@
-use crate::config::{Config, WorkspaceEntry, config_path};
+use crate::config::{config_path, Config, WorkspaceEntry};
 use std::path::{Path, PathBuf};
 
 /// Validate workspace name: lowercase alphanumeric + dashes, 1-32 chars.
@@ -33,7 +33,7 @@ fn resolve_path(path: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-pub fn add(name: &str, path: &Path, init: bool) -> anyhow::Result<()> {
+pub fn add(name: &str, path: &Path, init: bool, template: Option<&str>) -> anyhow::Result<()> {
     validate_name(name)?;
     let abs = resolve_path(path)?;
 
@@ -42,6 +42,10 @@ pub fn add(name: &str, path: &Path, init: bool) -> anyhow::Result<()> {
 
     if cfg.workspaces.contains_key(name) {
         anyhow::bail!("workspace '{name}' already exists");
+    }
+
+    if init && template.is_some() {
+        anyhow::bail!("--init and --template are mutually exclusive");
     }
 
     // Catch the case where two visibly-different paths point at the same
@@ -65,7 +69,12 @@ pub fn add(name: &str, path: &Path, init: bool) -> anyhow::Result<()> {
         }
     }
 
-    if init {
+    if let Some(tpl) = template {
+        if abs.exists() && std::fs::read_dir(&abs)?.next().is_some() {
+            anyhow::bail!("--template requires an empty or non-existent directory");
+        }
+        crate::templates::copy_template(tpl, &abs)?;
+    } else if init {
         if !abs.exists() {
             std::fs::create_dir_all(&abs)?;
         }
@@ -91,6 +100,9 @@ pub fn add(name: &str, path: &Path, init: bool) -> anyhow::Result<()> {
     cfg.save_to(&cfg_path)?;
 
     println!("Added workspace '{name}' at {}", abs.display());
+    if let Some(tpl) = template {
+        println!("  initialized from template '{tpl}'");
+    }
     if first_workspace {
         println!("  set as current (first workspace)");
     }
@@ -262,7 +274,7 @@ pub(super) mod tests {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
-            add("personal", vault.path(), false).unwrap();
+            add("personal", vault.path(), false, None).unwrap();
             let cfg = Config::load_from(&config_path().unwrap()).unwrap();
             assert_eq!(cfg.workspace.current.as_deref(), Some("personal"));
             assert_eq!(cfg.workspaces.len(), 1);
@@ -276,8 +288,8 @@ pub(super) mod tests {
         let v1 = TempDir::new().unwrap();
         let v2 = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
-            add("personal", v1.path(), false).unwrap();
-            add("work", v2.path(), false).unwrap();
+            add("personal", v1.path(), false, None).unwrap();
+            add("work", v2.path(), false, None).unwrap();
             let cfg = Config::load_from(&config_path().unwrap()).unwrap();
             assert_eq!(cfg.workspace.current.as_deref(), Some("personal"));
             assert_eq!(cfg.workspaces.len(), 2);
@@ -290,8 +302,8 @@ pub(super) mod tests {
         let home = TempDir::new().unwrap();
         let v = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
-            add("foo", v.path(), false).unwrap();
-            assert!(add("foo", v.path(), false).is_err());
+            add("foo", v.path(), false, None).unwrap();
+            assert!(add("foo", v.path(), false, None).is_err());
         });
     }
 
@@ -301,7 +313,7 @@ pub(super) mod tests {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
-            add("foo", vault.path(), true).unwrap();
+            add("foo", vault.path(), true, None).unwrap();
             assert!(vault.path().join(".lw/schema.toml").exists());
         });
     }
@@ -313,7 +325,37 @@ pub(super) mod tests {
         let vault = TempDir::new().unwrap();
         std::fs::write(vault.path().join("stranger.txt"), "hi").unwrap();
         with_lw_home(home.path(), || {
-            assert!(add("foo", vault.path(), true).is_err());
+            assert!(add("foo", vault.path(), true, None).is_err());
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn add_with_template_copies_tree() {
+        let home = TempDir::new().unwrap();
+        let templates_dir = TempDir::new().unwrap();
+        // Stub templates
+        let demo = templates_dir.path().join("templates").join("demo");
+        std::fs::create_dir_all(demo.join(".lw")).unwrap();
+        std::fs::create_dir_all(demo.join("wiki/_uncategorized")).unwrap();
+        std::fs::write(
+            demo.join(".lw/schema.toml"),
+            "[tags]\ncategories = [\"_uncategorized\"]\n",
+        )
+        .unwrap();
+        std::fs::write(demo.join("SCOPE.md"), "# Scope\n").unwrap();
+        std::fs::write(demo.join("wiki/_uncategorized/welcome.md"), "# Hi\n").unwrap();
+
+        let vault = TempDir::new().unwrap();
+        let target: &Path = &vault.path().join("v");
+        with_lw_home(home.path(), || {
+            unsafe {
+                std::env::set_var("LW_TEMPLATES_DIR", templates_dir.path().join("templates"))
+            };
+            add("foo", target, false, Some("demo")).unwrap();
+            unsafe { std::env::remove_var("LW_TEMPLATES_DIR") };
+            assert!(target.join("SCOPE.md").exists());
+            assert!(target.join(".lw/schema.toml").exists());
         });
     }
 }
@@ -342,8 +384,8 @@ mod crud_tests {
         let v_a = TempDir::new().unwrap();
         let v_b = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
-            add("a", v_a.path(), false).unwrap();
-            add("b", v_b.path(), false).unwrap();
+            add("a", v_a.path(), false, None).unwrap();
+            add("b", v_b.path(), false, None).unwrap();
             use_("b").unwrap();
             let cfg = Config::load_from(&config_path().unwrap()).unwrap();
             assert_eq!(cfg.workspace.current.as_deref(), Some("b"));
@@ -356,7 +398,7 @@ mod crud_tests {
         let home = TempDir::new().unwrap();
         let v = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
-            add("a", v.path(), false).unwrap();
+            add("a", v.path(), false, None).unwrap();
             remove("a").unwrap();
             let cfg = Config::load_from(&config_path().unwrap()).unwrap();
             assert!(cfg.workspace.current.is_none());

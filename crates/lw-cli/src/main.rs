@@ -8,6 +8,7 @@ mod query;
 mod read;
 mod serve;
 mod status;
+mod templates;
 mod workspace;
 mod write;
 
@@ -200,6 +201,9 @@ enum WorkspaceCmd {
         /// Initialize an empty wiki at the path if it does not exist
         #[arg(long)]
         init: bool,
+        /// Initialize from a starter template (general | research-papers | engineering-notes)
+        #[arg(long)]
+        template: Option<String>,
     },
     /// List all registered workspaces
     List,
@@ -385,7 +389,12 @@ fn main() {
             }
         },
         Commands::Workspace { action } => match action {
-            WorkspaceCmd::Add { name, path, init } => workspace::add(&name, &path, init),
+            WorkspaceCmd::Add {
+                name,
+                path,
+                init,
+                template,
+            } => workspace::add(&name, &path, init, template.as_deref()),
             WorkspaceCmd::List => workspace::list(),
             WorkspaceCmd::Current { verbose } => workspace::current(verbose),
             WorkspaceCmd::UseCmd { name } => workspace::use_(&name),
