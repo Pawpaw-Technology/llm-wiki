@@ -16,4 +16,9 @@ WORKDIR /home/tester
 COPY --chown=tester:tester installer/test-install.sh /home/tester/test-install.sh
 RUN chmod +x /home/tester/test-install.sh
 
+# install.sh routes PATH injection via $SHELL; in a fresh container $SHELL is
+# unset and we'd fall through to ~/.profile. Force bash so .bashrc gets the
+# marker and Test 2 (PATH marker injected) passes deterministically.
+ENV SHELL=/bin/bash
+
 ENTRYPOINT ["/home/tester/test-install.sh"]
