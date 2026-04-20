@@ -23,9 +23,12 @@ pub fn check() -> anyhow::Result<()> {
         println!("lw {installed_str} is up to date.");
         Ok(())
     } else {
-        println!("Newer release available: {latest} (installed: {installed_str})");
-        println!("Run `lw upgrade` to install.");
-        std::process::exit(1)
+        // Surface "newer available" as an error so main.rs's uniform Err →
+        // eprintln + exit(1) path handles it, rather than calling
+        // std::process::exit directly from inside a Result-returning fn.
+        Err(anyhow::anyhow!(
+            "Newer release available: {latest} (installed: {installed_str}). Run `lw upgrade` to install."
+        ))
     }
 }
 
