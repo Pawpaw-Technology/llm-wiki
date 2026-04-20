@@ -69,12 +69,108 @@ pub fn add(name: &str, path: &Path, init: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn list() -> anyhow::Result<()> {
+    let cfg = Config::load_from(&config_path()?)?;
+    if cfg.workspaces.is_empty() {
+        println!("(no workspaces registered — use `lw workspace add` to create one)");
+        return Ok(());
+    }
+    let current = cfg.workspace.current.as_deref();
+    for (name, entry) in &cfg.workspaces {
+        let marker = if Some(name.as_str()) == current {
+            "*"
+        } else {
+            " "
+        };
+        println!("{marker} {name:20} {}", entry.path.display());
+    }
+    Ok(())
+}
+
+pub fn current(verbose: bool) -> anyhow::Result<()> {
+    let cfg = Config::load_from(&config_path()?)?;
+    let cur = cfg.workspace.current.as_deref();
+    match cur {
+        Some(name) => match cfg.workspaces.get(name) {
+            Some(entry) => {
+                println!("{name}\t{}", entry.path.display());
+            }
+            None => {
+                anyhow::bail!(
+                    "current workspace '{name}' is registered but missing from workspaces table — config corrupt"
+                );
+            }
+        },
+        None => println!("(no current workspace)"),
+    }
+    if verbose {
+        println!();
+        println!("Resolution chain (--root > LW_WIKI_ROOT env > current workspace > cwd):");
+        println!(
+            "  --root flag:        {}",
+            "(only available at command time)"
+        );
+        println!(
+            "  LW_WIKI_ROOT env:   {}",
+            std::env::var("LW_WIKI_ROOT").unwrap_or_else(|_| "(unset)".into())
+        );
+        println!(
+            "  current workspace:  {}",
+            cur.map(|n| {
+                cfg.workspaces
+                    .get(n)
+                    .map(|e| e.path.display().to_string())
+                    .unwrap_or_else(|| "(missing entry)".into())
+            })
+            .unwrap_or_else(|| "(unset)".into())
+        );
+        println!(
+            "  cwd auto-discover:  {}",
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| lw_core::fs::discover_wiki_root(&p))
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(no wiki ancestor)".into())
+        );
+    }
+    Ok(())
+}
+
+pub fn use_(name: &str) -> anyhow::Result<()> {
+    let cfg_path = config_path()?;
+    let mut cfg = Config::load_from(&cfg_path)?;
+    if !cfg.workspaces.contains_key(name) {
+        anyhow::bail!("workspace '{name}' not found (use `lw workspace list` to see registered)");
+    }
+    cfg.workspace.current = Some(name.into());
+    cfg.save_to(&cfg_path)?;
+    println!("Current workspace set to '{name}'");
+    println!(
+        "Note: any running `lw serve` MCP processes still point at the previous vault. Restart your agent tool to pick up."
+    );
+    Ok(())
+}
+
+pub fn remove(name: &str) -> anyhow::Result<()> {
+    let cfg_path = config_path()?;
+    let mut cfg = Config::load_from(&cfg_path)?;
+    if cfg.workspaces.remove(name).is_none() {
+        anyhow::bail!("workspace '{name}' not found");
+    }
+    if cfg.workspace.current.as_deref() == Some(name) {
+        cfg.workspace.current = None;
+    }
+    cfg.save_to(&cfg_path)?;
+    println!("Removed workspace '{name}' from registry (vault directory untouched)");
+    Ok(())
+}
+
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn with_lw_home<F: FnOnce()>(home: &Path, f: F) {
+    pub(super) fn with_lw_home<F: FnOnce()>(home: &Path, f: F) {
         let prev = std::env::var("LW_HOME").ok();
         // SAFETY: tests are single-threaded for this env-var section. cargo test
         // runs tests in parallel by default; serialize with --test-threads=1 in CI.
@@ -159,6 +255,55 @@ mod tests {
         std::fs::write(vault.path().join("stranger.txt"), "hi").unwrap();
         with_lw_home(home.path(), || {
             assert!(add("foo", vault.path(), true).is_err());
+        });
+    }
+}
+
+#[cfg(test)]
+mod crud_tests {
+    use super::tests::with_lw_home;
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn use_unknown_errors() {
+        let home = TempDir::new().unwrap();
+        with_lw_home(home.path(), || {
+            assert!(use_("ghost").is_err());
+        });
+    }
+
+    #[test]
+    fn use_sets_current() {
+        let home = TempDir::new().unwrap();
+        let v = TempDir::new().unwrap();
+        with_lw_home(home.path(), || {
+            add("a", v.path(), false).unwrap();
+            add("b", v.path(), false).unwrap();
+            use_("b").unwrap();
+            let cfg = Config::load_from(&config_path().unwrap()).unwrap();
+            assert_eq!(cfg.workspace.current.as_deref(), Some("b"));
+        });
+    }
+
+    #[test]
+    fn remove_clears_current_if_was_current() {
+        let home = TempDir::new().unwrap();
+        let v = TempDir::new().unwrap();
+        with_lw_home(home.path(), || {
+            add("a", v.path(), false).unwrap();
+            remove("a").unwrap();
+            let cfg = Config::load_from(&config_path().unwrap()).unwrap();
+            assert!(cfg.workspace.current.is_none());
+            assert!(cfg.workspaces.is_empty());
+        });
+    }
+
+    #[test]
+    fn remove_unknown_errors() {
+        let home = TempDir::new().unwrap();
+        with_lw_home(home.path(), || {
+            assert!(remove("ghost").is_err());
         });
     }
 }
