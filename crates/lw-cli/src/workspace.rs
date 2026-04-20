@@ -96,8 +96,12 @@ pub fn current(verbose: bool) -> anyhow::Result<()> {
                 println!("{name}\t{}", entry.path.display());
             }
             None => {
-                anyhow::bail!(
-                    "current workspace '{name}' is registered but missing from workspaces table — config corrupt"
+                // Demoted from anyhow::bail!: keep going so `lw workspace
+                // current -v` still prints the resolution chain — that
+                // chain is the most useful diagnostic when config is
+                // corrupt.
+                eprintln!(
+                    "warning: current workspace '{name}' is registered but missing from workspaces table — config corrupt"
                 );
             }
         },

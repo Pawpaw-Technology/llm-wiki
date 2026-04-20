@@ -176,3 +176,29 @@ fn current_workspace_path_missing_yields_actionable_error() {
         .stderr(predicate::str::contains("no longer exists"))
         .stderr(predicate::str::contains("lw workspace remove ghosted"));
 }
+
+#[test]
+#[serial_test::serial]
+fn current_verbose_warns_but_continues_when_table_missing_entry() {
+    // Hand-craft a corrupt config where workspace.current points at a
+    // name that has no corresponding workspaces[<name>] entry. `lw
+    // workspace current -v` should warn on stderr but still print the
+    // resolution chain so the user can debug.
+    let home = TempDir::new().unwrap();
+    let cfg_path = home.path().join("config.toml");
+    std::fs::write(
+        &cfg_path,
+        "[workspace]\ncurrent = \"orphan\"\n\n[workspaces]\n",
+    )
+    .unwrap();
+
+    lw(home.path())
+        .args(["workspace", "current", "-v"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"))
+        .stderr(predicate::str::contains("orphan"))
+        .stderr(predicate::str::contains("config corrupt"))
+        .stdout(predicate::str::contains("Resolution chain"))
+        .stdout(predicate::str::contains("(missing entry)"));
+}
