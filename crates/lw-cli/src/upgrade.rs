@@ -45,7 +45,10 @@ pub fn apply(yes: bool) -> anyhow::Result<()> {
     if yes {
         cmd.arg("--yes");
     }
+    // Pass both: LW_HOME is canonical (read by the lw binary), LW_INSTALL_PREFIX
+    // is kept as alias for back-compat with install.sh's flag naming.
     cmd.env("LW_INSTALL_PREFIX", &prefix);
+    cmd.env("LW_HOME", &prefix);
 
     let status = cmd.status()?;
     if !status.success() {

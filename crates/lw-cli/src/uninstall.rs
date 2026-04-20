@@ -28,7 +28,10 @@ pub fn run(opts: UninstallOpts) -> anyhow::Result<()> {
     if opts.purge {
         cmd.arg("--purge");
     }
+    // Pass both: LW_HOME is canonical (read by the lw binary), LW_INSTALL_PREFIX
+    // is kept as alias for back-compat with uninstall.sh's flag naming.
     cmd.env("LW_INSTALL_PREFIX", &prefix);
+    cmd.env("LW_HOME", &prefix);
 
     let status = cmd.status()?;
     if !status.success() {

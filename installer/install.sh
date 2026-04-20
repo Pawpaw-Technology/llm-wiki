@@ -6,7 +6,9 @@ set -eu
 
 # --- Defaults & flags --------------------------------------------------------
 
-LW_INSTALL_PREFIX="${LW_INSTALL_PREFIX:-$HOME/.llm-wiki}"
+# LW_HOME is the canonical env var (also read by the lw binary); LW_INSTALL_PREFIX
+# is accepted as an alias for back-compat. Priority: LW_INSTALL_PREFIX > LW_HOME > default.
+LW_INSTALL_PREFIX="${LW_INSTALL_PREFIX:-${LW_HOME:-$HOME/.llm-wiki}}"
 LW_VERSION="${LW_VERSION:-latest}"
 LW_REPO="${LW_REPO:-Pawpaw-Technology/llm-wiki}"
 LW_YES=0
@@ -24,7 +26,8 @@ Options:
   --help, -h          Show this help
 
 Environment:
-  LW_INSTALL_PREFIX   Same as --prefix
+  LW_HOME             Install prefix (preferred; also read by the lw binary)
+  LW_INSTALL_PREFIX   Alias for LW_HOME (back-compat)
   LW_VERSION          Same as --version
   LW_REPO             GitHub repo slug (default: Pawpaw-Technology/llm-wiki)
 EOF

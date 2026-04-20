@@ -3,7 +3,9 @@
 
 set -eu
 
-LW_INSTALL_PREFIX="${LW_INSTALL_PREFIX:-$HOME/.llm-wiki}"
+# LW_HOME is the canonical env var (also read by the lw binary); LW_INSTALL_PREFIX
+# is accepted as an alias for back-compat. Priority: LW_INSTALL_PREFIX > LW_HOME > default.
+LW_INSTALL_PREFIX="${LW_INSTALL_PREFIX:-${LW_HOME:-$HOME/.llm-wiki}}"
 LW_YES=0
 LW_KEEP_CONFIG=0
 LW_PURGE=0
@@ -18,6 +20,10 @@ Options:
   --purge            Also delete .bak files left by integration writes
   --prefix <dir>     Override install prefix
   --help, -h         Show this help
+
+Environment:
+  LW_HOME            Install prefix (preferred; also read by the lw binary)
+  LW_INSTALL_PREFIX  Alias for LW_HOME (back-compat)
 EOF
 }
 
