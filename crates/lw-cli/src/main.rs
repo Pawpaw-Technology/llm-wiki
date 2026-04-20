@@ -1,3 +1,4 @@
+mod config;
 mod import;
 mod ingest;
 mod init;
