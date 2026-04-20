@@ -230,23 +230,24 @@ fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
     // If the user has a current workspace registered but its path is gone
     // (vault moved/deleted), surface a distinct, actionable error rather
     // than silently falling through to cwd discovery.
+    //
+    // Note: when `current` is set but its name has no corresponding entry
+    // in `workspaces` (corrupt config), the outer let-chain short-circuits
+    // and we fall through to cwd discovery. `workspace::current(verbose)`
+    // is the diagnostic for that case.
     if let Ok(cfg_path) = config::config_path()
         && let Ok(cfg) = config::Config::load_from(&cfg_path)
         && let Some(name) = &cfg.workspace.current
+        && let Some(entry) = cfg.workspaces.get(name)
     {
-        if let Some(entry) = cfg.workspaces.get(name) {
-            if entry.path.exists() {
-                return Ok(entry.path.clone());
-            }
-            return Err(format!(
-                "current workspace '{name}' points to {} which no longer exists\n  Run: lw workspace remove {name}  (to forget it)\n  Or restore the directory at {}",
-                entry.path.display(),
-                entry.path.display()
-            ));
+        if entry.path.exists() {
+            return Ok(entry.path.clone());
         }
-        // Current is set but the workspaces table has no entry — config
-        // is corrupt. Don't crash here; let cwd discovery still run as a
-        // last resort. workspace::current(verbose) can be used to debug.
+        return Err(format!(
+            "current workspace '{name}' points to {} which no longer exists\n  Run: lw workspace remove {name}  (to forget it)\n  Or restore the directory at {}",
+            entry.path.display(),
+            entry.path.display()
+        ));
     }
     // Final fallback: cwd auto-discover
     let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
