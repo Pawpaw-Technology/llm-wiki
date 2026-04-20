@@ -1,6 +1,6 @@
 use crate::config::{Config, config_path};
 use crate::integrations::{
-    descriptor::{Descriptor, expand_tilde},
+    descriptor::{Descriptor, McpConfig, SkillsConfig, expand_tilde},
     load_all, mcp,
 };
 use crate::version_file::{CURRENT_BINARY_VERSION, VersionFile, version_file_path};
@@ -262,105 +262,105 @@ fn check_integrations() -> Vec<CheckResult> {
 fn check_one_integration(id: &str, desc: &Descriptor) -> Vec<CheckResult> {
     let mut out = Vec::new();
     if let Some(mcp_cfg) = &desc.mcp {
-        let path = expand_tilde(&mcp_cfg.config_path);
-        if !path.exists() {
-            out.push(CheckResult::warn(
-                format!("integration: {id} (MCP)"),
-                format!("{} missing", path.display()),
-                format!("`lw integrate {id}` to install"),
-            ));
-        } else {
-            match std::fs::read_to_string(&path).and_then(|s| {
-                serde_json::from_str::<Value>(&s).map_err(|e| std::io::Error::other(e.to_string()))
-            }) {
-                Ok(cfg) => {
-                    let parts: Vec<&str> = mcp_cfg.key_path.split('.').collect();
-                    let mut cursor = &cfg;
-                    let mut found = true;
-                    for p in &parts {
-                        match cursor.get(*p) {
-                            Some(c) => cursor = c,
-                            None => {
-                                found = false;
-                                break;
-                            }
-                        }
-                    }
-                    if !found || cursor.is_null() {
-                        out.push(CheckResult::warn(
-                            format!("integration: {id} (MCP)"),
-                            format!("entry {} not present", mcp_cfg.key_path),
-                            format!("`lw integrate {id}` to install"),
-                        ));
-                    } else {
-                        let entry_version = cursor
-                            .get(mcp::VERSION_MARKER)
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("(missing)");
-                        let cmd = cursor.get("command").and_then(|v| v.as_str()).unwrap_or("");
-                        // Stale binary path check: command is bare "lw" or absolute.
-                        // If absolute and points somewhere unexpected, warn.
-                        let cmd_warn = if cmd != "lw" {
-                            let p = std::path::Path::new(cmd);
-                            if p.is_absolute() && !p.exists() {
-                                Some(format!("MCP command points at non-existent {cmd}"))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-                        let label = format!("integration: {id} (MCP)");
-                        let detail = format!("{} entry version={entry_version}", mcp_cfg.key_path);
-                        match cmd_warn {
-                            Some(w) => out.push(CheckResult::warn(
-                                label,
-                                w,
-                                format!("`lw integrate {id}` to refresh"),
-                            )),
-                            None if entry_version != CURRENT_BINARY_VERSION => {
-                                out.push(CheckResult::warn(
-                                    label,
-                                    format!("{detail} (current lw is {CURRENT_BINARY_VERSION})"),
-                                    format!("`lw integrate {id}` to refresh"),
-                                ))
-                            }
-                            None => out.push(CheckResult::ok(label, detail)),
-                        }
-                    }
-                }
-                Err(e) => out.push(CheckResult::fail(
-                    format!("integration: {id} (MCP)"),
-                    format!("{} unparseable: {e}", path.display()),
-                    "restore from .bak.* file or repair JSON",
-                )),
-            }
-        }
+        out.push(check_mcp(id, mcp_cfg));
     }
     if let Some(skills_cfg) = &desc.skills {
-        let target = expand_tilde(&skills_cfg.target_dir);
-        if !target.exists() && target.symlink_metadata().is_err() {
-            out.push(CheckResult::warn(
-                format!("integration: {id} (skills)"),
-                format!("{} missing", target.display()),
-                format!("`lw integrate {id}` to install"),
-            ));
-        } else {
-            // If symlink, verify target resolves
-            match target.canonicalize() {
-                Ok(_) => out.push(CheckResult::ok(
-                    format!("integration: {id} (skills)"),
-                    target.display().to_string(),
-                )),
-                Err(e) => out.push(CheckResult::fail(
-                    format!("integration: {id} (skills)"),
-                    format!("{} dangling: {e}", target.display()),
-                    format!("`lw integrate {id}` to relink"),
-                )),
+        out.push(check_skills(id, skills_cfg));
+    }
+    out
+}
+
+fn check_mcp(id: &str, mcp_cfg: &McpConfig) -> CheckResult {
+    let label = format!("integration: {id} (MCP)");
+    let path = expand_tilde(&mcp_cfg.config_path);
+    if !path.exists() {
+        return CheckResult::warn(
+            label,
+            format!("{} missing", path.display()),
+            format!("`lw integrate {id}` to install"),
+        );
+    }
+    let cfg = match std::fs::read_to_string(&path).and_then(|s| {
+        serde_json::from_str::<Value>(&s).map_err(|e| std::io::Error::other(e.to_string()))
+    }) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return CheckResult::fail(
+                label,
+                format!("{} unparseable: {e}", path.display()),
+                "restore from .bak.* file or repair JSON",
+            );
+        }
+    };
+
+    let parts: Vec<&str> = mcp_cfg.key_path.split('.').collect();
+    let mut cursor = &cfg;
+    let mut found = true;
+    for p in &parts {
+        match cursor.get(*p) {
+            Some(c) => cursor = c,
+            None => {
+                found = false;
+                break;
             }
         }
     }
-    out
+    if !found || cursor.is_null() {
+        return CheckResult::warn(
+            label,
+            format!("entry {} not present", mcp_cfg.key_path),
+            format!("`lw integrate {id}` to install"),
+        );
+    }
+
+    let entry_version = cursor
+        .get(mcp::VERSION_MARKER)
+        .and_then(|v| v.as_str())
+        .unwrap_or("(missing)");
+    let cmd = cursor.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    // Stale binary path check: command is bare "lw" or absolute.
+    // If absolute and points somewhere unexpected, warn.
+    let cmd_warn = if cmd != "lw" {
+        let p = std::path::Path::new(cmd);
+        if p.is_absolute() && !p.exists() {
+            Some(format!("MCP command points at non-existent {cmd}"))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let detail = format!("{} entry version={entry_version}", mcp_cfg.key_path);
+    match cmd_warn {
+        Some(w) => CheckResult::warn(label, w, format!("`lw integrate {id}` to refresh")),
+        None if entry_version != CURRENT_BINARY_VERSION => CheckResult::warn(
+            label,
+            format!("{detail} (current lw is {CURRENT_BINARY_VERSION})"),
+            format!("`lw integrate {id}` to refresh"),
+        ),
+        None => CheckResult::ok(label, detail),
+    }
+}
+
+fn check_skills(id: &str, skills_cfg: &SkillsConfig) -> CheckResult {
+    let label = format!("integration: {id} (skills)");
+    let target = expand_tilde(&skills_cfg.target_dir);
+    if !target.exists() && target.symlink_metadata().is_err() {
+        return CheckResult::warn(
+            label,
+            format!("{} missing", target.display()),
+            format!("`lw integrate {id}` to install"),
+        );
+    }
+    // If symlink, verify target resolves
+    match target.canonicalize() {
+        Ok(_) => CheckResult::ok(label, target.display().to_string()),
+        Err(e) => CheckResult::fail(
+            label,
+            format!("{} dangling: {e}", target.display()),
+            format!("`lw integrate {id}` to relink"),
+        ),
+    }
 }
 
 fn check_serve_smoke() -> CheckResult {
