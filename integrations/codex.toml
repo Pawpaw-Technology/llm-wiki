@@ -1,0 +1,14 @@
+name = "Codex"
+
+[detect]
+config_dir = "~/.codex"
+
+# Codex's MCP config is TOML, not JSON. The current MCP merge engine
+# (lw-cli/src/integrations/mcp.rs) only handles JSON. For 1.0 we ship the
+# descriptor with only the [skills] section so `lw integrate codex` performs
+# the skill-link half. The MCP wiring lands in 1.1 once the merge engine grows
+# TOML support; until then, README documents the manual MCP step for Codex.
+
+[skills]
+target_dir = "~/.codex/skills/llm-wiki/"
+mode = "symlink"
