@@ -1,2 +1,6 @@
+[wiki]
+name = "Engineering Notes"
+default_review_days = 90
+
 [tags]
-categories = ["systems", "tools", "patterns", "incidents", "_uncategorized"]
+categories = ["systems", "tools", "patterns", "incidents"]

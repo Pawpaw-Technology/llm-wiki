@@ -1,2 +1,6 @@
+[wiki]
+name = "General"
+default_review_days = 90
+
 [tags]
-categories = ["notes", "links", "people", "_uncategorized"]
+categories = ["notes", "links", "people"]
