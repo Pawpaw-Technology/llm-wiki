@@ -64,6 +64,12 @@ lw doctor             # one-shot health check (config, integrations, MCP, versio
 lw workspace current -v   # show full root-resolution chain
 ```
 
+If your agent tool isn't picking up llm-wiki, reset that integration:
+
+```bash
+lw integrate claude-code --uninstall && lw integrate claude-code
+```
+
 Backups from MCP config writes land at `<config>.bak.<timestamp>` next to the original file. The uninstaller (`lw uninstall`) preserves your vault directories and saves `~/.llm-wiki/config.toml` to `~/.llm-wiki.config.toml.bak.<timestamp>` so reinstalls can restore vault registrations.
 
 ## Architecture
