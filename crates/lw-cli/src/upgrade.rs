@@ -1,4 +1,4 @@
-use crate::version_file::{version_file_path, VersionFile, CURRENT_BINARY_VERSION};
+use crate::version_file::{CURRENT_BINARY_VERSION, VersionFile, version_file_path};
 use serde::Deserialize;
 use std::process::Command;
 
