@@ -1,9 +1,9 @@
-use crate::config::{Config, config_path};
+use crate::config::{config_path, Config};
 use crate::integrations::{
-    descriptor::{Descriptor, McpConfig, SkillsConfig, expand_tilde},
+    descriptor::{expand_tilde, Descriptor, McpConfig, SkillsConfig},
     integrations_root, load_all, mcp,
 };
-use crate::version_file::{CURRENT_BINARY_VERSION, VersionFile, version_file_path};
+use crate::version_file::{version_file_path, VersionFile, CURRENT_BINARY_VERSION};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -124,8 +124,12 @@ fn check_binary() -> CheckResult {
 }
 
 fn check_path_env() -> CheckResult {
+    // Mirror install.sh's priority: LW_INSTALL_PREFIX > LW_HOME > $HOME/.llm-wiki.
+    // Previously LW_HOME was ignored here, so a custom-prefix install would
+    // always show a spurious "not in PATH" warning pointing at ~/.llm-wiki/bin.
     let prefix = std::env::var("LW_INSTALL_PREFIX")
         .ok()
+        .or_else(|| std::env::var("LW_HOME").ok())
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".llm-wiki")))
         .map(|p| p.join("bin"));
@@ -500,6 +504,43 @@ mod tests {
             let r = check_version_compat();
             assert_eq!(r.status, Status::Fail);
         });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn check_path_env_honors_lw_home() {
+        // Regression for v0.2.0-rc.1 smoke-gate M2: doctor used to read
+        // LW_INSTALL_PREFIX only, falling straight through to
+        // ~/.llm-wiki/bin, so custom-prefix installs always got a spurious
+        // "not in PATH" warning pointing at a directory that doesn't
+        // exist. Priority must mirror install.sh:
+        // LW_INSTALL_PREFIX > LW_HOME > $HOME/.llm-wiki.
+        // SAFETY: tests serialized via #[serial_test::serial]
+        let prev_prefix = std::env::var("LW_INSTALL_PREFIX").ok();
+        let prev_home = std::env::var("LW_HOME").ok();
+        unsafe { std::env::remove_var("LW_INSTALL_PREFIX") };
+        unsafe { std::env::set_var("LW_HOME", "/tmp/lw-doctor-probe") };
+
+        // Path almost certainly not in PATH, so expect Warn — the load-bearing
+        // assertion is that `detail` names the LW_HOME-derived path rather
+        // than ~/.llm-wiki/bin.
+        let r = check_path_env();
+
+        // Restore env before asserting so an assertion failure can't leak.
+        match prev_prefix {
+            Some(p) => unsafe { std::env::set_var("LW_INSTALL_PREFIX", p) },
+            None => unsafe { std::env::remove_var("LW_INSTALL_PREFIX") },
+        }
+        match prev_home {
+            Some(p) => unsafe { std::env::set_var("LW_HOME", p) },
+            None => unsafe { std::env::remove_var("LW_HOME") },
+        }
+
+        let detail = r.detail.as_ref().expect("detail must be populated");
+        assert!(
+            detail.contains("/tmp/lw-doctor-probe/bin"),
+            "expected detail to reference LW_HOME-derived path, got: {detail}",
+        );
     }
 
     #[test]
