@@ -20,7 +20,10 @@ Usage: install.sh [options]
 
 Options:
   --yes, -y           Auto-integrate detected agent tools (no prompts)
-  --no-integrate      Install only; never prompt or write to agent configs
+  --no-integrate      Install only; skip ALL user-dir writes.
+                      Suppresses shell-rc PATH injection, MCP config
+                      writes, and skills install — useful for sandboxed
+                      / scripted installs.
   --prefix <dir>      Install to <dir> instead of \$HOME/.llm-wiki
   --version <tag>     Install a specific release tag (default: latest)
   --help, -h          Show this help
@@ -167,6 +170,10 @@ EOF
 echo "Installed lw ${RELEASE_VERSION} to ${LW_INSTALL_PREFIX}"
 
 # --- PATH injection ----------------------------------------------------------
+#
+# --no-integrate suppresses all user-dir writes, including shell-rc PATH
+# injection. This matches the flag's documented scope and keeps
+# sandboxed / scripted installs fully contained to $LW_INSTALL_PREFIX.
 
 inject_path() {
   rc="$1"
@@ -184,15 +191,17 @@ ${marker_end}"
   echo "  PATH appended to $rc"
 }
 
-case "${SHELL:-}" in
-  *zsh*)  inject_path "$HOME/.zshrc" ;;
-  *bash*) inject_path "$HOME/.bashrc"; inject_path "$HOME/.bash_profile" ;;
-  *fish*) inject_path "$HOME/.config/fish/config.fish" ;;
-  *) inject_path "$HOME/.profile" ;;
-esac
+if [ "$LW_NO_INTEGRATE" -ne 1 ]; then
+  case "${SHELL:-}" in
+    *zsh*)  inject_path "$HOME/.zshrc" ;;
+    *bash*) inject_path "$HOME/.bashrc"; inject_path "$HOME/.bash_profile" ;;
+    *fish*) inject_path "$HOME/.config/fish/config.fish" ;;
+    *) inject_path "$HOME/.profile" ;;
+  esac
 
-# Ensure PATH is good for THIS shell session
-export PATH="${LW_INSTALL_PREFIX}/bin:$PATH"
+  # Ensure PATH is good for THIS shell session
+  export PATH="${LW_INSTALL_PREFIX}/bin:$PATH"
+fi
 
 # --- Optional integration ---------------------------------------------------
 

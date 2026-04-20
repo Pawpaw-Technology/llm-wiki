@@ -12,6 +12,8 @@ curl -fsSL https://github.com/Pawpaw-Technology/llm-wiki/releases/latest/downloa
 
 The installer fetches the matching prebuilt binary for your platform (macOS / Linux, x86_64 / aarch64), verifies sha256, and stages everything under `~/.llm-wiki/`. Pin a version: `... releases/download/v0.2.0/install.sh`. CI / unattended? Append `--no-integrate` (default for non-TTY) or `--yes` (auto-integrate detected agent tools).
 
+`--no-integrate` skips **all** user-dir writes — shell-rc PATH injection, MCP config writes, and skills install. Use it for sandboxed or scripted installs where everything must stay inside `$LW_INSTALL_PREFIX`; add `"$LW_INSTALL_PREFIX/bin"` to `PATH` yourself afterward.
+
 ## First vault, with a template
 
 ```bash
