@@ -8,6 +8,7 @@ mod query;
 mod read;
 mod serve;
 mod status;
+mod workspace;
 mod write;
 
 use clap::Parser;
