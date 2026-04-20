@@ -177,6 +177,48 @@ enum Commands {
         #[arg(long)]
         content: Option<String>,
     },
+
+    /// Manage registered wiki workspaces (Obsidian-style vaults)
+    #[command(
+        after_help = "Examples:\n  lw workspace add personal ~/Documents/MyWiki --init\n  lw workspace list\n  lw workspace use work\n  lw workspace current -v\n  lw workspace remove old-vault"
+    )]
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceCmd,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum WorkspaceCmd {
+    /// Register a new workspace
+    Add {
+        /// Workspace name (lowercase alphanumeric + dashes)
+        name: String,
+        /// Path to the vault directory
+        path: PathBuf,
+        /// Initialize an empty wiki at the path if it does not exist
+        #[arg(long)]
+        init: bool,
+    },
+    /// List all registered workspaces
+    List,
+    /// Print the current workspace name and path
+    Current {
+        /// Show the full root resolution chain for debugging
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Set the current workspace
+    #[command(name = "use")]
+    UseCmd {
+        /// Name of the workspace to switch to
+        name: String,
+    },
+    /// Remove a workspace from the registry (does not touch the directory)
+    Remove {
+        /// Name of the workspace to unregister
+        name: String,
+    },
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -326,6 +368,13 @@ fn main() {
                 eprintln!("Error: {e}");
                 process::exit(1);
             }
+        },
+        Commands::Workspace { action } => match action {
+            WorkspaceCmd::Add { name, path, init } => workspace::add(&name, &path, init),
+            WorkspaceCmd::List => workspace::list(),
+            WorkspaceCmd::Current { verbose } => workspace::current(verbose),
+            WorkspaceCmd::UseCmd { name } => workspace::use_(&name),
+            WorkspaceCmd::Remove { name } => workspace::remove(&name),
         },
     };
 
