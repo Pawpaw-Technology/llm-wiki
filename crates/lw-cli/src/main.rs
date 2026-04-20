@@ -19,6 +19,7 @@ use std::process;
 #[derive(Parser)]
 #[command(
     name = "lw",
+    version,
     about = "LLM Wiki — team knowledge base toolkit",
     after_help = "Examples:\n  lw init\n  lw query \"attention mechanism\" --format json\n  lw ingest paper.pdf --category architecture --yes"
 )]
