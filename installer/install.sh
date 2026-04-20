@@ -221,7 +221,7 @@ if [ "$IS_TTY" -eq 1 ]; then
   cat <<EOF
 
 Next steps:
-  1. Restart your shell (or: source ${rc:-~/.profile})
+  1. Restart your shell (or open a new terminal)
   2. lw workspace add my-vault ~/path/to/wiki --template general
   3. lw integrate --auto    # if you skipped during install
   4. Open your agent tool in the vault and try the llm-wiki:import skill
