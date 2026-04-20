@@ -11,6 +11,7 @@ mod read;
 mod serve;
 mod status;
 mod templates;
+mod uninstall;
 mod upgrade;
 mod version_file;
 mod workspace;
@@ -220,6 +221,22 @@ enum Commands {
         /// Pass --yes to the installer (auto-integrate)
         #[arg(short, long)]
         yes: bool,
+    },
+
+    /// Remove llm-wiki from this machine (vault data preserved)
+    #[command(
+        after_help = "Examples:\n  lw uninstall\n  lw uninstall --yes\n  lw uninstall --keep-config\n  lw uninstall --yes --purge"
+    )]
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+        /// Keep ~/.llm-wiki/config.toml in place
+        #[arg(long)]
+        keep_config: bool,
+        /// Also delete .bak files left by past integration writes
+        #[arg(long)]
+        purge: bool,
     },
 }
 
@@ -449,6 +466,15 @@ fn main() {
                 upgrade::apply(yes)
             }
         }
+        Commands::Uninstall {
+            yes,
+            keep_config,
+            purge,
+        } => uninstall::run(uninstall::UninstallOpts {
+            yes,
+            keep_config,
+            purge,
+        }),
     };
 
     if let Err(e) = result {
