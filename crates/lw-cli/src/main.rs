@@ -2,6 +2,7 @@ mod config;
 mod import;
 mod ingest;
 mod init;
+mod integrations;
 mod lint;
 mod output;
 mod query;
