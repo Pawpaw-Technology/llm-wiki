@@ -11,6 +11,7 @@ mod read;
 mod serve;
 mod status;
 mod templates;
+mod version_file;
 mod workspace;
 mod write;
 
