@@ -1,4 +1,4 @@
-use crate::config::{config_path, Config, WorkspaceEntry};
+use crate::config::{Config, WorkspaceEntry, config_path};
 use std::path::{Path, PathBuf};
 
 /// Validate workspace name: lowercase alphanumeric + dashes, 1-32 chars.
@@ -171,16 +171,28 @@ pub(super) mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// RAII guard that restores LW_HOME on drop, including panic unwind.
+    /// This prevents env leakage between tests when an assertion in `f`
+    /// panics. Tests are also `#[serial_test::serial]` annotated so they
+    /// never run concurrently against the same env var.
+    struct LwHomeGuard(Option<String>);
+
+    impl Drop for LwHomeGuard {
+        fn drop(&mut self) {
+            // SAFETY: serialized via #[serial_test::serial] on every caller.
+            match self.0.take() {
+                Some(p) => unsafe { std::env::set_var("LW_HOME", p) },
+                None => unsafe { std::env::remove_var("LW_HOME") },
+            }
+        }
+    }
+
     pub(super) fn with_lw_home<F: FnOnce()>(home: &Path, f: F) {
-        let prev = std::env::var("LW_HOME").ok();
-        // SAFETY: tests are single-threaded for this env-var section. cargo test
-        // runs tests in parallel by default; serialize with --test-threads=1 in CI.
+        let _guard = LwHomeGuard(std::env::var("LW_HOME").ok());
+        // SAFETY: serialized via #[serial_test::serial] on every caller.
         unsafe { std::env::set_var("LW_HOME", home) };
         f();
-        match prev {
-            Some(p) => unsafe { std::env::set_var("LW_HOME", p) },
-            None => unsafe { std::env::remove_var("LW_HOME") },
-        }
+        // _guard restores LW_HOME on drop, including the panic-unwind path.
     }
 
     #[test]
