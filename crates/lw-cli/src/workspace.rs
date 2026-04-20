@@ -1,4 +1,4 @@
-use crate::config::{Config, WorkspaceEntry, config_path};
+use crate::config::{config_path, Config, WorkspaceEntry};
 use std::path::{Path, PathBuf};
 
 /// Validate workspace name: lowercase alphanumeric + dashes, 1-32 chars.
@@ -200,6 +200,7 @@ pub(super) mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn add_first_workspace_sets_current() {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
@@ -212,6 +213,7 @@ pub(super) mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn add_second_workspace_does_not_change_current() {
         let home = TempDir::new().unwrap();
         let v1 = TempDir::new().unwrap();
@@ -226,6 +228,7 @@ pub(super) mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn add_duplicate_name_errors() {
         let home = TempDir::new().unwrap();
         let v = TempDir::new().unwrap();
@@ -236,6 +239,7 @@ pub(super) mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn add_with_init_creates_wiki_in_empty_dir() {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
@@ -246,6 +250,7 @@ pub(super) mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn add_with_init_rejects_nonempty_non_wiki() {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
@@ -263,6 +268,7 @@ mod crud_tests {
     use tempfile::TempDir;
 
     #[test]
+    #[serial_test::serial]
     fn use_unknown_errors() {
         let home = TempDir::new().unwrap();
         with_lw_home(home.path(), || {
@@ -271,6 +277,7 @@ mod crud_tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn use_sets_current() {
         let home = TempDir::new().unwrap();
         let v = TempDir::new().unwrap();
@@ -284,6 +291,7 @@ mod crud_tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn remove_clears_current_if_was_current() {
         let home = TempDir::new().unwrap();
         let v = TempDir::new().unwrap();
@@ -297,6 +305,7 @@ mod crud_tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn remove_unknown_errors() {
         let home = TempDir::new().unwrap();
         with_lw_home(home.path(), || {

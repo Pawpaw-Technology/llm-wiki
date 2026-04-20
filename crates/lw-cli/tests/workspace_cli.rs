@@ -11,6 +11,7 @@ fn lw(home: &std::path::Path) -> Command {
 }
 
 #[test]
+#[serial_test::serial]
 fn full_workspace_lifecycle() {
     let home = TempDir::new().unwrap();
     let vault_a = TempDir::new().unwrap();
@@ -95,6 +96,7 @@ fn full_workspace_lifecycle() {
 }
 
 #[test]
+#[serial_test::serial]
 fn duplicate_add_fails() {
     let home = TempDir::new().unwrap();
     let vault = TempDir::new().unwrap();
@@ -110,6 +112,7 @@ fn duplicate_add_fails() {
 }
 
 #[test]
+#[serial_test::serial]
 fn invalid_name_fails() {
     let home = TempDir::new().unwrap();
     let vault = TempDir::new().unwrap();
@@ -126,6 +129,7 @@ fn invalid_name_fails() {
 }
 
 #[test]
+#[serial_test::serial]
 fn list_empty_message() {
     let home = TempDir::new().unwrap();
     lw(home.path())
