@@ -656,10 +656,12 @@ fn read_json_format() {
     assert_eq!(json["path"], "architecture/transformer.md");
     assert_eq!(json["title"], "Flash Attention 2");
     assert!(json["tags"].is_array());
-    assert!(json["body"]
-        .as_str()
-        .unwrap()
-        .contains("reduces memory usage"));
+    assert!(
+        json["body"]
+            .as_str()
+            .unwrap()
+            .contains("reduces memory usage")
+    );
 }
 
 #[test]
