@@ -150,6 +150,55 @@ fn ingest_with_yes_flag() {
 }
 
 #[test]
+fn ingest_stdin_uses_title_derived_filename() {
+    // Regression: v0.2.0-rc.2 smoke gate found stdin ingest writing
+    // `.tmpRandomXXX` files instead of slug-derived names.
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    lw().args([
+        "--root",
+        tmp.path().to_str().unwrap(),
+        "ingest",
+        "--stdin",
+        "--title",
+        "Hello World",
+        "--category",
+        "notes",
+        "--raw-type",
+        "articles",
+        "--yes",
+    ])
+    .write_stdin("# body\n")
+    .assert()
+    .success();
+
+    let raw_dir = tmp.path().join("raw/articles");
+    let entries: Vec<String> = std::fs::read_dir(&raw_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(entries.len(), 1, "expected exactly 1 file in raw/articles");
+    let name = &entries[0];
+    assert!(
+        !name.starts_with('.'),
+        "filename should not start with '.' (got {name})"
+    );
+    assert!(
+        !name.starts_with("tmp"),
+        "filename should not start with 'tmp' (got {name})"
+    );
+    assert!(
+        name.to_lowercase().contains("hello"),
+        "filename should contain title slug (got {name})"
+    );
+}
+
+#[test]
 fn ingest_without_source_fails() {
     let tmp = TempDir::new().unwrap();
     lw().args(["init", "--root", tmp.path().to_str().unwrap()])
@@ -607,12 +656,10 @@ fn read_json_format() {
     assert_eq!(json["path"], "architecture/transformer.md");
     assert_eq!(json["title"], "Flash Attention 2");
     assert!(json["tags"].is_array());
-    assert!(
-        json["body"]
-            .as_str()
-            .unwrap()
-            .contains("reduces memory usage")
-    );
+    assert!(json["body"]
+        .as_str()
+        .unwrap()
+        .contains("reduces memory usage"));
 }
 
 #[test]
