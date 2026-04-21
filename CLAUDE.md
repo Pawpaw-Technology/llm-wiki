@@ -2,10 +2,11 @@
 
 ## What This Is
 
-LLM Wiki (`lw`) — a team knowledge base toolkit. Rust workspace producing a single binary `lw` with CLI commands and an MCP server. Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+LLM Wiki (`lw`) — an installable, agent-tool-agnostic knowledge base product. Rust workspace producing a single binary `lw` (CLI + MCP server) plus the canonical skills, starter templates, integration descriptors, and POSIX installer that ship together as a release tarball. Inspired by [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 **Repo:** https://github.com/Pawpaw-Technology/llm-wiki
-**Tool is open source. Wiki content repos are private.**
+**Install:** `curl -fsSL https://github.com/Pawpaw-Technology/llm-wiki/releases/latest/download/install.sh | sh`
+**Tool + skills + installer are open source. Wiki content (vaults) is bring-your-own.**
 
 ## Build & Test
 
@@ -20,13 +21,31 @@ make test                  # via Makefile (includes clippy + fmt)
 
 ```
 crates/
-├── lw-core/    # core library — all logic lives here
-├── lw-cli/     # CLI binary (`lw`)
-├── lw-mcp/     # MCP server library (used by `lw serve`)
-└── lw-server/  # Phase 2 HTTP server (placeholder)
+├── lw-core/         # core library — wiki I/O, search, lint, freshness
+├── lw-cli/          # CLI binary (`lw`) — umbrella for all commands
+└── lw-mcp/          # MCP server library (used by `lw serve`)
+
+skills/
+└── llm-wiki-import/ # canonical agent skill (markdown + frontmatter)
+
+templates/           # starter vaults copied by `lw workspace add --template <name>`
+├── general/
+├── research-papers/
+└── engineering-notes/
+
+integrations/        # declarative TOML adapters per agent tool
+├── claude-code.toml # full MCP + skills (1.0)
+├── codex.toml       # skills only in 1.0; auto-MCP in 1.1
+└── openclaw.toml    # skills only in 1.0
+
+installer/
+├── install.sh       # POSIX, curl-installable, sha256-verified
+└── uninstall.sh     # reverses install; preserves vault data
 ```
 
-Wiki is a **separate git repo** of markdown files, not in this repo.
+Vaults (wiki content) are **separate git repos** of markdown files; users bring their own.
+
+The release tarball (built by `.github/workflows/release.yml` on `v*` tag push) bundles `lw` + `skills/` + `templates/` + `integrations/` + `installer/` + a `VERSION` file into one per-platform archive. `install.sh` and `uninstall.sh` are also published as separate top-level release assets so the curl line works without first downloading the binary.
 
 ## Key Design Rules
 
@@ -38,18 +57,39 @@ Wiki is a **separate git repo** of markdown files, not in this repo.
 
 ## CLI Commands
 
+**Wiki ops** (work against `--root <vault>`, env `LW_WIKI_ROOT`, the current registered workspace, or cwd auto-discover):
+
 ```bash
-lw init                                          # scaffold wiki
-lw query "attention" --format json               # search
-lw ingest paper.pdf --category architecture --yes  # raw filing only (no wiki page created)
-lw lint --format json                            # health checks: TODO, orphans, broken links, stale, missing concepts
-lw serve                                         # MCP server (stdio)
-lw status                                        # wiki health overview
+lw init                                            # scaffold wiki at --root or cwd
+lw query "attention" --format json                 # search
+lw ingest paper.pdf --category architecture --yes  # raw filing
+lw read architecture/transformer.md
+lw write tools/page.md --mode upsert --section Usage
+lw lint --format json
+lw status
+lw serve                                           # MCP server (stdio)
+```
+
+**Wrapper / lifecycle** (operate on the install + integrations, not on a vault):
+
+```bash
+lw workspace add my-vault ~/wiki --template general # register vault, copy starter
+lw workspace list | use | current [-v] | remove
+lw integrate --auto | <tool> [--uninstall]          # wire MCP + skills into agent tool
+lw upgrade --check | (apply)                        # update lw + skills + templates
+lw uninstall [--yes] [--keep-config] [--purge]
+lw doctor                                           # full health checklist + remediation hints
 ```
 
 ## MCP Tools
 
-`wiki_query`, `wiki_read`, `wiki_browse`, `wiki_tags`, `wiki_write`, `wiki_ingest`, `wiki_lint`
+`wiki_query`, `wiki_read`, `wiki_browse`, `wiki_tags`, `wiki_write`, `wiki_ingest`, `wiki_lint`, `wiki_stats`
+
+## Workspace registry
+
+`~/.llm-wiki/config.toml` (overridable via `LW_HOME`) holds registered vaults. `lw serve` resolves its root via:
+**`--root` flag > `LW_WIKI_ROOT` env > current registered workspace > cwd auto-discover**.
+Switching workspaces requires restarting the agent tool — MCP processes bind their vault at launch (see spec §4.1).
 
 ---
 
