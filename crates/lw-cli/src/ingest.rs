@@ -102,13 +102,30 @@ pub fn run(
     // Resolve source: URL download, stdin, or local file
     let _url_temp_dir;
     let _url_file_path;
-    let _stdin_temp;
+    let _stdin_temp_dir;
+    let _stdin_file_path;
     let source_path = if stdin_mode {
         let mut content = String::new();
         io::stdin().lock().read_to_string(&mut content)?;
-        _stdin_temp = tempfile::NamedTempFile::new()?;
-        std::fs::write(_stdin_temp.path(), &content)?;
-        _stdin_temp.path()
+        // Derive a deterministic filename from --title (or H1 from content),
+        // so the copy in raw/ has a meaningful name instead of a random tempfile prefix.
+        // We write into a fresh tempdir so ingest_source().file_name() picks up our chosen name.
+        let stdin_title = title
+            .clone()
+            .or_else(|| extract_h1(&content))
+            .unwrap_or_else(|| "untitled".to_string());
+        let slug = slugify(&stdin_title);
+        let slug = if slug.is_empty() {
+            "untitled".to_string()
+        } else {
+            slug
+        };
+        let dir = tempfile::tempdir()?;
+        let file_path = dir.path().join(format!("{}.md", slug));
+        std::fs::write(&file_path, &content)?;
+        _stdin_temp_dir = dir;
+        _stdin_file_path = file_path;
+        _stdin_file_path.as_path()
     } else {
         let source_str = source_str.as_deref().ok_or_else(|| {
             anyhow::anyhow!(

@@ -1,12 +1,22 @@
+mod config;
+mod doctor;
 mod import;
 mod ingest;
 mod init;
+mod install_prefix;
+mod integrate;
+mod integrations;
 mod lint;
 mod output;
 mod query;
 mod read;
 mod serve;
 mod status;
+mod templates;
+mod uninstall;
+mod upgrade;
+mod version_file;
+mod workspace;
 mod write;
 
 use clap::Parser;
@@ -17,6 +27,7 @@ use std::process;
 #[derive(Parser)]
 #[command(
     name = "lw",
+    version,
     about = "LLM Wiki — team knowledge base toolkit",
     after_help = "Examples:\n  lw init\n  lw query \"attention mechanism\" --format json\n  lw ingest paper.pdf --category architecture --yes"
 )]
@@ -175,16 +186,137 @@ enum Commands {
         #[arg(long)]
         content: Option<String>,
     },
+
+    /// Manage registered wiki workspaces (Obsidian-style vaults)
+    #[command(
+        after_help = "Examples:\n  lw workspace add personal ~/Documents/MyWiki --init\n  lw workspace list\n  lw workspace use work\n  lw workspace current -v\n  lw workspace remove old-vault"
+    )]
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceCmd,
+    },
+
+    /// Wire llm-wiki into your agent tool(s)
+    #[command(
+        after_help = "Examples:\n  lw integrate --auto\n  lw integrate claude-code\n  lw integrate claude-code --uninstall\n  lw integrate --auto --yes  # non-interactive"
+    )]
+    Integrate {
+        /// Specific integration id (omit for --auto detection)
+        tool: Option<String>,
+        /// Detect installed tools and prompt per tool
+        #[arg(long, conflicts_with = "tool")]
+        auto: bool,
+        /// Skip prompts (assume yes)
+        #[arg(short, long)]
+        yes: bool,
+        /// Reverse the integration
+        #[arg(long)]
+        uninstall: bool,
+    },
+
+    /// Check for or apply a newer llm-wiki release
+    #[command(after_help = "Examples:\n  lw upgrade --check\n  lw upgrade\n  lw upgrade --yes")]
+    Upgrade {
+        /// Only check; do not download/replace
+        #[arg(long)]
+        check: bool,
+        /// Pass --yes to the installer (auto-integrate)
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Remove llm-wiki from this machine (vault data preserved)
+    #[command(
+        after_help = "Examples:\n  lw uninstall\n  lw uninstall --yes\n  lw uninstall --keep-config\n  lw uninstall --yes --purge"
+    )]
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+        /// Keep ~/.llm-wiki/config.toml in place
+        #[arg(long)]
+        keep_config: bool,
+        /// Also delete .bak files left by past integration writes
+        #[arg(long)]
+        purge: bool,
+    },
+
+    /// Diagnose installation health (config, integrations, MCP, version skew)
+    #[command(
+        after_help = "Examples:\n  lw doctor\n  # Exit 1 if any check fails; suitable for CI."
+    )]
+    Doctor,
+}
+
+#[derive(clap::Subcommand)]
+enum WorkspaceCmd {
+    /// Register a new workspace
+    Add {
+        /// Workspace name (lowercase alphanumeric + dashes)
+        name: String,
+        /// Path to the vault directory
+        path: PathBuf,
+        /// Initialize an empty wiki at the path if it does not exist
+        #[arg(long)]
+        init: bool,
+        /// Initialize from a starter template (general | research-papers | engineering-notes)
+        #[arg(long)]
+        template: Option<String>,
+    },
+    /// List all registered workspaces
+    List,
+    /// Print the current workspace name and path
+    Current {
+        /// Show the full root resolution chain for debugging
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Set the current workspace
+    #[command(name = "use")]
+    UseCmd {
+        /// Name of the workspace to switch to
+        name: String,
+    },
+    /// Remove a workspace from the registry (does not touch the directory)
+    Remove {
+        /// Name of the workspace to unregister
+        name: String,
+    },
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> Result<PathBuf, String> {
+    // Priority: --root flag > LW_WIKI_ROOT env (already merged into cli_root by clap) > current workspace > cwd
     if let Some(root) = cli_root {
         return Ok(root);
     }
+    // Try current workspace from ~/.llm-wiki/config.toml.
+    // If the user has a current workspace registered but its path is gone
+    // (vault moved/deleted), surface a distinct, actionable error rather
+    // than silently falling through to cwd discovery.
+    //
+    // Note: when `current` is set but its name has no corresponding entry
+    // in `workspaces` (corrupt config), the outer let-chain short-circuits
+    // and we fall through to cwd discovery. `workspace::current(verbose)`
+    // is the diagnostic for that case.
+    if let Ok(cfg_path) = config::config_path()
+        && let Ok(cfg) = config::Config::load_from(&cfg_path)
+        && let Some(name) = &cfg.workspace.current
+        && let Some(entry) = cfg.workspaces.get(name)
+    {
+        if entry.path.exists() {
+            return Ok(entry.path.clone());
+        }
+        return Err(format!(
+            "current workspace '{name}' points to {} which no longer exists\n  Run: lw workspace remove {name}  (to forget it)\n  Or restore the directory at {}",
+            entry.path.display(),
+            entry.path.display()
+        ));
+    }
+    // Final fallback: cwd auto-discover
     let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
     lw_core::fs::discover_wiki_root(&cwd).ok_or_else(|| {
         format!(
-            "Not a wiki directory (or any parent): {}\n  Run: lw init --root <path>\n  Or set LW_WIKI_ROOT environment variable",
+            "Not a wiki directory (or any parent): {}\n  Run: lw init --root <path>\n  Or: lw workspace add <name> <path> --init\n  Or set LW_WIKI_ROOT environment variable",
             cwd.display()
         )
     })
@@ -314,6 +446,44 @@ fn main() {
                 process::exit(1);
             }
         },
+        Commands::Workspace { action } => match action {
+            WorkspaceCmd::Add {
+                name,
+                path,
+                init,
+                template,
+            } => workspace::add(&name, &path, init, template.as_deref()),
+            WorkspaceCmd::List => workspace::list(),
+            WorkspaceCmd::Current { verbose } => workspace::current(verbose),
+            WorkspaceCmd::UseCmd { name } => workspace::use_(&name),
+            WorkspaceCmd::Remove { name } => workspace::remove(&name),
+        },
+        Commands::Integrate {
+            tool,
+            auto,
+            yes,
+            uninstall,
+        } => {
+            let target = if auto { None } else { tool.as_deref() };
+            integrate::run(target, integrate::IntegrateOpts { yes, uninstall })
+        }
+        Commands::Upgrade { check, yes } => {
+            if check {
+                upgrade::check()
+            } else {
+                upgrade::apply(yes)
+            }
+        }
+        Commands::Uninstall {
+            yes,
+            keep_config,
+            purge,
+        } => uninstall::run(uninstall::UninstallOpts {
+            yes,
+            keep_config,
+            purge,
+        }),
+        Commands::Doctor => doctor::run(),
     };
 
     if let Err(e) = result {

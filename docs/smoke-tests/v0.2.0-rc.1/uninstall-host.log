@@ -1,0 +1,16 @@
+Reversing integrations...
+Uninstalling Claude Code (claude-code)
+  MCP entry removed from /Users/vergil/.claude/settings.json
+  backup: /Users/vergil/.claude/settings.json.bak.1776682289
+  skills removed from /Users/vergil/.claude/skills/llm-wiki/
+Uninstalling Codex (codex)
+Uninstalling OpenClaw (openclaw)
+  PATH marker removed from /Users/vergil/.zshrc
+  config saved to /Users/vergil/.llm-wiki.config.toml.bak.1776682289
+  removed /tmp/lw-smoke-prefix
+
+Uninstall complete.
+Vault directories were NOT touched. Check ~/.llm-wiki.config.toml.bak.* if you want to re-register.
+uninstall exit: 0
+OK: prefix removed
+OK: vault preserved

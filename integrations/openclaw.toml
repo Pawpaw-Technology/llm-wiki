@@ -1,0 +1,8 @@
+name = "OpenClaw"
+
+[detect]
+config_dir = "~/.openclaw"
+
+[skills]
+target_dir = "~/.openclaw/skills/llm-wiki/"
+mode = "symlink"

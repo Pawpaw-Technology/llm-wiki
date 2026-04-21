@@ -143,7 +143,13 @@ pub fn validate_wiki_path(wiki_root: &Path, relative_path: &str) -> Result<PathB
 /// Canonicalize a path that may not fully exist on disk by walking up to the
 /// closest existing ancestor, canonicalizing it, and re-appending the
 /// non-existent tail components.
-fn canonicalize_ancestor(path: &Path) -> PathBuf {
+///
+/// This is useful when a caller wants a stable, symlink-resolved identity for
+/// a path that will be created later (e.g. `/tmp/wp` on macOS, where `/tmp`
+/// is a symlink to `/private/tmp` — a plain absolute path passthrough would
+/// treat `/tmp/wp` and `/private/tmp/wp` as different, but both canonicalize
+/// to `/private/tmp/wp`).
+pub fn canonicalize_ancestor(path: &Path) -> PathBuf {
     let mut existing = path.to_path_buf();
     let mut tail = Vec::new();
     while !existing.exists() {

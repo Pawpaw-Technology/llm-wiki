@@ -1,0 +1,6 @@
+Fetching lw-aarch64-darwin.tar.gz from https://github.com/Pawpaw-Technology/llm-wiki/releases/latest/download...
+  sha256 ok
+Installed lw 0.2.0-rc.2 to /tmp/lw-behavior-prefix
+Added workspace 'test' at /private/tmp/lw-behavior-vault
+  initialized from template 'general'
+  set as current (first workspace)

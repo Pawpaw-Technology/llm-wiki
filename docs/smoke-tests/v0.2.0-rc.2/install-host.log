@@ -1,0 +1,96 @@
+Fetching lw-aarch64-darwin.tar.gz from https://github.com/Pawpaw-Technology/llm-wiki/releases/latest/download...
+  sha256 ok
+Installed lw 0.2.0-rc.2 to /tmp/lw-smoke2-prefix
+User's ~/.zshrc has llm-wiki marker after --no-integrate install: NO (expected: NO)
+Fake HOME .zshrc exists: NO, has marker: NO (expected: any/NO since --no-integrate)
+total 0
+drwxr-xr-x    2 vergil  wheel     64 Apr 21 09:46 .
+drwxrwxrwt  474 root    wheel  15168 Apr 21 09:47 ..
+bin/
+installer/
+integrations/
+skills/
+templates/
+version  82B
+lw  17.1M
+lw 0.2.0-rc.2
+--- doctor with LW_HOME=/tmp/lw-smoke2-prefix and HOME=fake ---
+lw doctor
+=========
+✓ binary location
+    /tmp/lw-smoke2-prefix/bin/lw (v0.2.0-rc.2)
+⚠ PATH includes lw bin
+    /tmp/lw-smoke2-prefix/bin not in PATH
+    → open a new shell, or `source ~/.zshrc` (or your rc file)
+✓ config.toml
+    /tmp/lw-smoke2-prefix/config.toml (not present — single-vault mode)
+✓ current workspace
+    (none — using cwd auto-discover)
+✓ binary/assets version
+    both at 0.2.0-rc.2
+✓ integration: claude-code
+    Claude Code not detected — skipped
+✓ integration: codex
+    Codex not detected — skipped
+✓ integration: openclaw
+    OpenClaw not detected — skipped
+✓ lw serve smoke
+    starts and stays up for 200ms
+---
+8 passed, 1 warned, 0 failed
+doctor exit: 0
+--- M2 verify: doctor PATH check uses LW_HOME ---
+    /tmp/lw-smoke2-prefix/bin/lw (v0.2.0-rc.2)
+⚠ PATH includes lw bin
+    /tmp/lw-smoke2-prefix/bin not in PATH
+    /tmp/lw-smoke2-prefix/config.toml (not present — single-vault mode)
+--- B1 verify: template general ---
+Added workspace 'demo' at /private/tmp/lw-smoke2-vault
+  initialized from template 'general'
+  set as current (first workspace)
+B1 general add exit: 0
+
+  Wiki:   General (/tmp/lw-smoke2-vault)
+  Pages:  1
+  Index:  missing
+
+  Freshness:
+    FRESH 0     SUSPECT 0     STALE 0     unknown 1   
+    [........................................]
+
+  Categories:
+    _uncategorized          1 pages
+
+B1 general status exit: 0
+--- B1 verify: template research-papers ---
+Added workspace 'rp' at /private/tmp/lw-smoke2-vault-rp
+  initialized from template 'research-papers'
+
+  Wiki:   Research Papers (/tmp/lw-smoke2-vault-rp)
+  Pages:  1
+  Index:  missing
+
+  Freshness:
+    FRESH 0     SUSPECT 0     STALE 0     unknown 1   
+    [........................................]
+
+  Categories:
+    _uncategorized          1 pages
+
+B1 rp exit: 0
+--- B1 verify: template engineering-notes ---
+Added workspace 'en' at /private/tmp/lw-smoke2-vault-en
+  initialized from template 'engineering-notes'
+
+  Wiki:   Engineering Notes (/tmp/lw-smoke2-vault-en)
+  Pages:  1
+  Index:  missing
+
+  Freshness:
+    FRESH 0     SUSPECT 0     STALE 0     unknown 1   
+    [........................................]
+
+  Categories:
+    _uncategorized          1 pages
+
+B1 en exit: 0

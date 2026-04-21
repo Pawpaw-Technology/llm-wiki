@@ -1,0 +1,6 @@
+[wiki]
+name = "Research Papers"
+default_review_days = 180
+
+[tags]
+categories = ["architecture", "training", "evaluation", "applications"]

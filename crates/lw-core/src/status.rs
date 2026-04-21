@@ -65,7 +65,7 @@ pub fn gather_status(root: &Path) -> crate::Result<WikiStatus> {
         .into_iter()
         .map(|(name, page_count)| CategoryStatus { name, page_count })
         .collect();
-    categories.sort_by(|a, b| b.page_count.cmp(&a.page_count));
+    categories.sort_by_key(|c| std::cmp::Reverse(c.page_count));
 
     let index_present = root.join(crate::INDEX_DIR).exists();
 

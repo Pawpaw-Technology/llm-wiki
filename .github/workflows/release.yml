@@ -19,16 +19,16 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: lw-x86_64-linux
+            asset: lw-x86_64-linux.tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: lw-aarch64-linux
+            asset: lw-aarch64-linux.tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: lw-x86_64-darwin
+            asset: lw-x86_64-darwin.tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: lw-aarch64-darwin
+            asset: lw-aarch64-darwin.tar.gz
     steps:
       - uses: actions/checkout@v4
 
@@ -40,8 +40,10 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -50,22 +52,52 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p lw-cli
 
-      - name: Package binary
+      - name: Stage tarball contents
+        run: |
+          STAGE=stage
+          mkdir -p "$STAGE"
+          cp target/${{ matrix.target }}/release/lw "$STAGE/lw"
+          cp -R skills "$STAGE/skills"
+          cp -R templates "$STAGE/templates"
+          cp -R integrations "$STAGE/integrations"
+          mkdir -p "$STAGE/installer"
+          cp installer/install.sh "$STAGE/installer/"
+          cp installer/uninstall.sh "$STAGE/installer/"
+          chmod +x "$STAGE/installer/install.sh" "$STAGE/installer/uninstall.sh"
+          # VERSION = tag without leading 'v'
+          echo "${GITHUB_REF_NAME#v}" > "$STAGE/VERSION"
+
+      - name: Package tarball
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/lw dist/
-          cd dist
-          tar czf ${{ matrix.artifact }}.tar.gz lw
-          shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+          tar -C stage -czf dist/${{ matrix.asset }} .
+          shasum -a 256 dist/${{ matrix.asset }} | awk '{print $1"  "$2}' > dist/${{ matrix.asset }}.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}.tar.gz*
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}*
+
+  publish-installer:
+    name: Publish install.sh as separate asset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage installer + sha256
+        run: |
+          mkdir -p dist
+          cp installer/install.sh dist/install.sh
+          cp installer/uninstall.sh dist/uninstall.sh
+          shasum -a 256 dist/install.sh | awk '{print $1"  "$2}' > dist/install.sh.sha256
+          shasum -a 256 dist/uninstall.sh | awk '{print $1"  "$2}' > dist/uninstall.sh.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-scripts
+          path: dist/*
 
   release:
     name: Create Release
-    needs: build
+    needs: [build, publish-installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

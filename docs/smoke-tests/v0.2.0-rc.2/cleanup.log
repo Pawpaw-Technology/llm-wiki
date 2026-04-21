@@ -1,0 +1,12 @@
+=== Pre-uninstall sha256 ===
+320eceb09d933cbb02fd2817204fb72fdcefba50e3a5f887121831fd38a0a9f1  /Users/vergil/.claude/settings.json
+Skipping integration uninstall — custom prefix (/tmp/lw-behavior-prefix).
+  (integrations were never written to user config under a custom prefix;
+   reversing them would damage pre-existing user agent state)
+  config saved to /Users/vergil/.llm-wiki.config.toml.bak.1776737896
+  removed /tmp/lw-behavior-prefix
+
+Uninstall complete.
+Vault directories were NOT touched. Check ~/.llm-wiki.config.toml.bak.* if you want to re-register.
+=== Post-uninstall sha256 ===
+320eceb09d933cbb02fd2817204fb72fdcefba50e3a5f887121831fd38a0a9f1  /Users/vergil/.claude/settings.json

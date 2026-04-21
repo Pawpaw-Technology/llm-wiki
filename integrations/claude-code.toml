@@ -1,0 +1,15 @@
+name = "Claude Code"
+
+[detect]
+config_dir = "~/.claude"
+
+[mcp]
+config_path = "~/.claude/settings.json"
+format = "json"
+key_path = "mcpServers.llm-wiki"
+command = "lw"
+args = ["serve"]
+
+[skills]
+target_dir = "~/.claude/skills/llm-wiki/"
+mode = "symlink"

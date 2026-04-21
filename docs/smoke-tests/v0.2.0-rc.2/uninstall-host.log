@@ -1,0 +1,16 @@
+--- B2 verify: uninstall under custom prefix ---
+Skipping integration uninstall — custom prefix (/tmp/lw-smoke2-prefix).
+  (integrations were never written to user config under a custom prefix;
+   reversing them would damage pre-existing user agent state)
+  config saved to /tmp/lw-smoke2-fakehome/.llm-wiki.config.toml.bak.1776736091
+  removed /tmp/lw-smoke2-prefix
+
+Uninstall complete.
+Vault directories were NOT touched. Check ~/.llm-wiki.config.toml.bak.* if you want to re-register.
+User's ~/.claude/settings.json sha256 before: 320eceb09d933cbb02fd2817204fb72fdcefba50e3a5f887121831fd38a0a9f1
+User's ~/.claude/settings.json sha256 after:  320eceb09d933cbb02fd2817204fb72fdcefba50e3a5f887121831fd38a0a9f1
+B2 PASS: user state untouched
+OK: prefix removed
+OK: vault preserved
+OK: vault-rp preserved
+OK: vault-en preserved
