@@ -3,8 +3,12 @@ name = "Claude Code"
 [detect]
 config_dir = "~/.claude"
 
+# Claude Code (desktop + CLI) reads user-level MCP servers from ~/.claude.json
+# (a file sibling to the .claude/ directory), NOT from ~/.claude/settings.json.
+# Writing to the wrong file means `/mcp` never surfaces the server and the
+# integration silently does nothing. See smoke discovery 2026-04-21.
 [mcp]
-config_path = "~/.claude/settings.json"
+config_path = "~/.claude.json"
 format = "json"
 key_path = "mcpServers.llm-wiki"
 command = "lw"
