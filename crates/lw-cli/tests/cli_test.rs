@@ -216,12 +216,22 @@ fn help_shows_all_commands() {
     lw().arg("--help")
         .assert()
         .success()
+        // Wiki ops (original commands)
         .stdout(predicate::str::contains("init"))
         .stdout(predicate::str::contains("query"))
         .stdout(predicate::str::contains("ingest"))
         .stdout(predicate::str::contains("serve"))
         .stdout(predicate::str::contains("status"))
-        .stdout(predicate::str::contains("Examples"));
+        // Wrapper / lifecycle commands (added in v0.2.0+)
+        .stdout(predicate::str::contains("workspace"))
+        .stdout(predicate::str::contains("integrate"))
+        .stdout(predicate::str::contains("upgrade"))
+        .stdout(predicate::str::contains("uninstall"))
+        .stdout(predicate::str::contains("doctor"))
+        // v0.2.1 grouped examples sections
+        .stdout(predicate::str::contains("First-time setup"))
+        .stdout(predicate::str::contains("Day-to-day"))
+        .stdout(predicate::str::contains("Maintenance"));
 }
 
 #[test]
