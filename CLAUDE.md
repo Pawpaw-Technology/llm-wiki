@@ -47,6 +47,22 @@ Vaults (wiki content) are **separate git repos** of markdown files; users bring 
 
 The release tarball (built by `.github/workflows/release.yml` on `v*` tag push) bundles `lw` + `skills/` + `templates/` + `integrations/` + `installer/` + a `VERSION` file into one per-platform archive. `install.sh` and `uninstall.sh` are also published as separate top-level release assets so the curl line works without first downloading the binary.
 
+## Dev workspace (replacing the deprecated mono)
+
+`llm-wiki-mono` was previously used as a checkout convenience that bundled `llm-wiki` + `llm-wiki-agents` + `codebridge` + a private `wiki` content repo as submodules. **It is now archived.** Contributors who want all four repos visible at once should clone them as siblings:
+
+```bash
+mkdir -p ~/dev/llm-wiki && cd ~/dev/llm-wiki
+git clone git@github.com:Pawpaw-Technology/llm-wiki.git
+git clone git@github.com:Pawpaw-Technology/llm-wiki-agents.git
+git clone git@github.com:64andrewwalker/codebridge.git
+# (private wiki repo only if you have access)
+```
+
+Each repo is self-contained and CI'd independently. There is no longer a "meta repo" to update — code, PRs, and releases happen in each repo individually.
+
+Spec, plans, and smoke transcripts that documented the v0.2.0 product wrapper rollout (formerly under `mono/docs/superpowers/`) now live in this repo under `docs/specs/`, `docs/plans/`, `docs/smoke-tests/`.
+
 ## Key Design Rules
 
 - Only one trait: `Searcher`; everything else is concrete types
