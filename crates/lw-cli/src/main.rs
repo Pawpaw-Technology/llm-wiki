@@ -29,7 +29,7 @@ use std::process;
     name = "lw",
     version,
     about = "LLM Wiki — team knowledge base toolkit",
-    after_help = "Examples:\n  lw init\n  lw query \"attention mechanism\" --format json\n  lw ingest paper.pdf --category architecture --yes"
+    after_help = "First-time setup:\n  lw workspace add my-vault ~/wiki --template general\n  lw integrate --auto       # wire your agent tool (Claude Code / Codex / OpenClaw)\n  lw doctor                 # verify everything is healthy\n\nDay-to-day (typically driven by your agent tool, not by hand):\n  lw query \"attention mechanism\"\n  lw ingest paper.pdf --category architecture --yes\n  lw read architecture/transformer.md\n  lw lint\n\nMaintenance:\n  lw upgrade --check\n  lw workspace list\n  lw uninstall              # vault data preserved"
 )]
 struct Cli {
     /// Wiki root directory (default: auto-discover from cwd, or LW_WIKI_ROOT env)
