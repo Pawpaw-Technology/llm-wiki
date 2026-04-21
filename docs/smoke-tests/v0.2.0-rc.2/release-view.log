@@ -1,0 +1,16 @@
+URL: https://github.com/Pawpaw-Technology/llm-wiki/releases/tag/v0.2.0-rc.2
+Tag: v0.2.0-rc.2
+Name: v0.2.0-rc.2
+Assets:
+  - install.sh (7583 bytes)
+  - install.sh.sha256 (82 bytes)
+  - lw-aarch64-darwin.tar.gz (8200018 bytes)
+  - lw-aarch64-darwin.tar.gz.sha256 (96 bytes)
+  - lw-aarch64-linux.tar.gz (9047637 bytes)
+  - lw-aarch64-linux.tar.gz.sha256 (95 bytes)
+  - lw-x86_64-darwin.tar.gz (8526931 bytes)
+  - lw-x86_64-darwin.tar.gz.sha256 (95 bytes)
+  - lw-x86_64-linux.tar.gz (8982353 bytes)
+  - lw-x86_64-linux.tar.gz.sha256 (94 bytes)
+  - uninstall.sh (5084 bytes)
+  - uninstall.sh.sha256 (84 bytes)

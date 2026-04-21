@@ -1,0 +1,28 @@
+Fetching lw-aarch64-darwin.tar.gz from https://github.com/Pawpaw-Technology/llm-wiki/releases/latest/download...
+  sha256 ok
+Installed lw 0.2.0-rc.2 to /tmp/lw-smoke2-prefix2
+--- Tools-layer behavior ---
+Added workspace 'demo' at /private/tmp/lw-smoke2-behavior-vault
+  initialized from template 'general'
+  set as current (first workspace)
+---
+Saved to /tmp/lw-smoke2-behavior-vault/raw/articles/.tmpQauNl3
+path: raw/articles/.tmpQauNl3
+title: Test Article
+category: notes
+ingest exit: 0
+---
+.tmpQauNl3  20B
+---
+Note: ingest saved as .tmpQauNl3 — same as rc.1; tools-layer ingest works but emits temp filename
+# Test article body
+--- Cleanup Step 5 ---
+Skipping integration uninstall — custom prefix (/tmp/lw-smoke2-prefix2).
+  (integrations were never written to user config under a custom prefix;
+   reversing them would damage pre-existing user agent state)
+  config saved to /tmp/lw-smoke2-fakehome2/.llm-wiki.config.toml.bak.1776736159
+  removed /tmp/lw-smoke2-prefix2
+
+Uninstall complete.
+Vault directories were NOT touched. Check ~/.llm-wiki.config.toml.bak.* if you want to re-register.
+Final user ~/.claude/settings.json sha: 320eceb09d933cbb02fd2817204fb72fdcefba50e3a5f887121831fd38a0a9f1
