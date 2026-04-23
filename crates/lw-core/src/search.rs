@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
+    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
@@ -117,6 +117,20 @@ impl TantivySearcher {
             f_tags,
             f_category,
         })
+    }
+
+    /// Returns true if the on-disk index contains no documents.
+    ///
+    /// Callers (notably `lw serve`) use this to skip a startup rebuild
+    /// when the index is already populated — rebuild opens the writer
+    /// and would block concurrent `lw query` rebuilds for the server's
+    /// lifetime. See GitHub issue #55.
+    pub fn is_empty(&self) -> bool {
+        // `num_docs` counts committed docs visible to the reader. The
+        // reader is built with `ReloadPolicy::Manual`, so reload first
+        // to catch docs persisted by a previous process.
+        let _ = self.reader.reload();
+        self.reader.searcher().num_docs() == 0
     }
 
     fn category_from_path(rel_path: &str) -> String {

@@ -11,11 +11,11 @@
 //! writer on demand. Until a write happens, concurrent `lw query` can
 //! freely refresh the index.
 
+use lw_core::WikiError;
 use lw_core::fs::{init_wiki, validate_wiki_path, write_page};
 use lw_core::page::Page;
 use lw_core::schema::WikiSchema;
 use lw_core::search::{Searcher, TantivySearcher};
-use lw_core::WikiError;
 use lw_mcp::WikiMcpServer;
 use tempfile::TempDir;
 

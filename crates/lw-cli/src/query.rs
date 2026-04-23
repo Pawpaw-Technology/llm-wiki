@@ -1,8 +1,8 @@
 use crate::output::{self, Format};
-use lw_core::fs::load_schema;
-use lw_core::git::{page_freshness, FreshnessLevel};
-use lw_core::search::{SearchHit, SearchQuery, Searcher, TantivySearcher};
 use lw_core::WikiError;
+use lw_core::fs::load_schema;
+use lw_core::git::{FreshnessLevel, page_freshness};
+use lw_core::search::{SearchHit, SearchQuery, Searcher, TantivySearcher};
 use std::path::Path;
 
 /// A search hit enriched with freshness information.
