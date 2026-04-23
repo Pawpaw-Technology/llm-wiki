@@ -2,6 +2,7 @@ name = "Claude Code"
 
 [detect]
 config_dir = "~/.claude"
+binary = "claude"
 
 # Claude Code (desktop + CLI) reads user-level MCP servers from ~/.claude.json
 # (a file sibling to the .claude/ directory), NOT from ~/.claude/settings.json.

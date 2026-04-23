@@ -2,6 +2,7 @@ name = "Codex"
 
 [detect]
 config_dir = "~/.codex"
+binary = "codex"
 
 # Codex's MCP config is TOML, not JSON. The current MCP merge engine
 # (lw-cli/src/integrations/mcp.rs) only handles JSON. For 1.0 we ship the

@@ -1,8 +1,8 @@
 use crate::integrations::{
-    descriptor::{Descriptor, McpFormat, expand_tilde},
+    descriptor::{expand_tilde, Descriptor, DetectOutcome, McpFormat},
     integrations_root, load_all, mcp, skills,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::io::IsTerminal;
 
 pub struct IntegrateOpts {
@@ -20,10 +20,29 @@ pub fn run(target: Option<&str>, opts: IntegrateOpts) -> anyhow::Result<()> {
             .filter(|(id, _)| id == name)
             .collect(),
         None => {
-            // --auto: only those whose detect.config_dir exists
+            // --auto: only those that pass strong detection. Missing config
+            // dirs are silent (user doesn't have the tool installed); other
+            // failure modes are surfaced so the user knows why we skipped.
             descriptors
                 .into_iter()
-                .filter(|(_, d)| d.detect_present())
+                .filter_map(|(id, d)| match d.detect() {
+                    DetectOutcome::Present => Some((id, d)),
+                    DetectOutcome::MissingConfigDir { .. } => None,
+                    DetectOutcome::BinaryNotOnPath { binary } => {
+                        println!(
+                            "Skipping {} ({id}): binary `{binary}` not found on PATH",
+                            d.name
+                        );
+                        None
+                    }
+                    DetectOutcome::VersionCheckFailed { binary, reason } => {
+                        println!(
+                            "Skipping {} ({id}): `{binary}` version probe failed ({reason})",
+                            d.name
+                        );
+                        None
+                    }
+                })
                 .collect()
         }
     };
@@ -36,7 +55,7 @@ pub fn run(target: Option<&str>, opts: IntegrateOpts) -> anyhow::Result<()> {
             ),
             None => {
                 println!(
-                    "No supported agent tools detected. Install Claude Code, Codex, or OpenClaw first."
+                    "No supported agent tools detected. Install Claude Code, Codex, Kimi Code, or OpenClaw first."
                 );
                 return Ok(());
             }

@@ -1,0 +1,21 @@
+name = "Kimi Code"
+
+[detect]
+config_dir = "~/.kimi"
+binary = "kimi"
+
+# Kimi Code's MCP config is JSON and uses the same `mcpServers.<name>` shape
+# as Claude Code (probed 2026-04-23 via `kimi mcp add`/`kimi mcp remove`).
+# Our existing JSON merge engine handles it without changes.
+[mcp]
+config_path = "~/.kimi/mcp.json"
+format = "json"
+key_path = "mcpServers.llm-wiki"
+command = "lw"
+args = ["serve"]
+
+# Kimi follows the cross-tool "brand group" skills layout. See
+# https://moonshotai.github.io/kimi-cli/en/customization/skills.md
+[skills]
+target_dir = "~/.kimi/skills/llm-wiki/"
+mode = "symlink"

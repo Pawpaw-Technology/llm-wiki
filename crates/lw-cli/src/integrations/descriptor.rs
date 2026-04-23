@@ -39,12 +39,6 @@ pub enum DetectOutcome {
     VersionCheckFailed { binary: String, reason: String },
 }
 
-impl DetectOutcome {
-    pub fn is_present(&self) -> bool {
-        matches!(self, DetectOutcome::Present)
-    }
-}
-
 impl Detect {
     /// Probe args, defaulting to `["--version"]` when the descriptor omits `version_cmd`.
     pub fn effective_version_cmd(&self) -> Vec<String> {
@@ -102,18 +96,100 @@ pub fn expand_tilde(s: &str) -> PathBuf {
 impl Descriptor {
     /// Evaluate the `[detect]` section against the current system.
     ///
-    /// STUB — RED step. Replaced in the GREEN commit with binary + version probe.
+    /// Strong detection (config dir + binary on PATH + version probe exit 0)
+    /// kicks in when the descriptor declares `detect.binary`. Otherwise this
+    /// falls back to the legacy config-dir-exists check — descriptors for
+    /// tools whose binary name we don't know yet can opt out by omitting
+    /// `detect.binary`.
     pub fn detect(&self) -> DetectOutcome {
         let dir = expand_tilde(&self.detect.config_dir);
-        if dir.exists() {
-            DetectOutcome::Present
-        } else {
-            DetectOutcome::MissingConfigDir { path: dir }
+        if !dir.exists() {
+            return DetectOutcome::MissingConfigDir { path: dir };
+        }
+        let Some(bin) = self.detect.binary.as_deref() else {
+            return DetectOutcome::Present;
+        };
+        let Some(resolved) = binary_in_path(bin) else {
+            return DetectOutcome::BinaryNotOnPath {
+                binary: bin.to_string(),
+            };
+        };
+        let probe_args = self.detect.effective_version_cmd();
+        match run_version_check(&resolved, &probe_args, VERSION_PROBE_TIMEOUT) {
+            Ok(()) => DetectOutcome::Present,
+            Err(reason) => DetectOutcome::VersionCheckFailed {
+                binary: bin.to_string(),
+                reason,
+            },
         }
     }
+}
 
-    pub fn detect_present(&self) -> bool {
-        self.detect().is_present()
+/// 5 s is generous enough for Python-based CLIs (kimi) on cold cache without
+/// making `lw doctor` feel sluggish when several integrations are detected.
+const VERSION_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Resolve `binary` against `$PATH`. Returns the first executable hit.
+///
+/// On Unix we require at least one execute bit set; on non-Unix we accept
+/// any regular file match. Windows support for strong detection is out of
+/// scope for 1.0.
+pub fn binary_in_path(binary: &str) -> Option<PathBuf> {
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let candidate = dir.join(binary);
+        if !candidate.is_file() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            match candidate.metadata() {
+                Ok(meta) if meta.permissions().mode() & 0o111 != 0 => return Some(candidate),
+                _ => continue,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Run `<binary> <args...>` with a deadline. `Ok(())` only on exit-0 within
+/// the timeout.
+///
+/// We spawn the child on a background thread and use a bounded channel to
+/// enforce the deadline. If the deadline fires the thread (and the child it
+/// spawned) are detached and may outlive this call; that's acceptable for a
+/// one-shot CLI invocation and keeps us free of extra dependencies.
+pub fn run_version_check(
+    binary: &std::path::Path,
+    args: &[String],
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+
+    let (tx, rx) = mpsc::channel();
+    let bin_owned = binary.to_path_buf();
+    let args_owned = args.to_vec();
+    std::thread::spawn(move || {
+        let status = Command::new(&bin_owned)
+            .args(&args_owned)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = tx.send(status);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(format!("exit code {}", status.code().unwrap_or(-1))),
+        Ok(Err(e)) => Err(format!("spawn failed: {e}")),
+        Err(_) => Err(format!("timed out after {}s", timeout.as_secs())),
     }
 }
 
@@ -263,7 +339,10 @@ config_dir = "~/.weak"
         assert_eq!(mcp.command, "lw");
         assert_eq!(mcp.args, vec!["serve".to_string()]);
 
-        let skills = d.skills.as_ref().expect("kimi descriptor should link skills");
+        let skills = d
+            .skills
+            .as_ref()
+            .expect("kimi descriptor should link skills");
         assert_eq!(skills.target_dir, "~/.kimi/skills/llm-wiki/");
         assert_eq!(skills.mode, SkillsMode::Symlink);
     }

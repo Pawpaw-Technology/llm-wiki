@@ -1,6 +1,6 @@
 use crate::config::{Config, config_path};
 use crate::integrations::{
-    descriptor::{Descriptor, McpConfig, SkillsConfig, expand_tilde},
+    descriptor::{Descriptor, DetectOutcome, McpConfig, SkillsConfig, expand_tilde},
     integrations_root, load_all, mcp,
 };
 use crate::version_file::{CURRENT_BINARY_VERSION, VersionFile, version_file_path};
@@ -270,14 +270,34 @@ fn check_integrations() -> Vec<CheckResult> {
         }
     };
     for (id, desc) in descriptors {
-        if !desc.detect_present() {
-            out.push(CheckResult::ok(
-                format!("integration: {id}"),
-                format!("{} not detected — skipped", desc.name),
-            ));
-            continue;
+        match desc.detect() {
+            DetectOutcome::Present => {
+                out.extend(check_one_integration(&id, &desc));
+            }
+            DetectOutcome::MissingConfigDir { .. } => {
+                out.push(CheckResult::ok(
+                    format!("integration: {id}"),
+                    format!("{} not detected — skipped", desc.name),
+                ));
+            }
+            DetectOutcome::BinaryNotOnPath { binary } => {
+                out.push(CheckResult::warn(
+                    format!("integration: {id}"),
+                    format!(
+                        "{} config dir present but `{binary}` not on PATH",
+                        desc.name
+                    ),
+                    format!("install {} or ensure `{binary}` is on $PATH", desc.name),
+                ));
+            }
+            DetectOutcome::VersionCheckFailed { binary, reason } => {
+                out.push(CheckResult::warn(
+                    format!("integration: {id}"),
+                    format!("{}: `{binary}` version probe failed ({reason})", desc.name),
+                    format!("verify `{binary}` runs; reinstall if broken"),
+                ));
+            }
         }
-        out.extend(check_one_integration(&id, &desc));
     }
     out
 }
