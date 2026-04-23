@@ -323,3 +323,51 @@ fn rebuild_returns_index_locked_when_writer_held_elsewhere() {
         "expected IndexLocked, got {err:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// is_empty — lets `lw serve` skip the startup rebuild when the on-disk index
+// is already populated, so it never opens the writer and concurrent
+// `lw query` rebuilds don't hit IndexLocked. See GitHub issue #55.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn is_empty_true_for_fresh_index() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+    assert!(
+        searcher.is_empty(),
+        "fresh index must report is_empty() == true"
+    );
+}
+
+#[test]
+fn is_empty_false_after_indexing() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+    let (path, page) = make_page("Something", &[], "body");
+    searcher.index_page(&path, &page).unwrap();
+    searcher.commit().unwrap();
+    assert!(
+        !searcher.is_empty(),
+        "populated index must report is_empty() == false"
+    );
+}
+
+#[test]
+fn is_empty_reflects_persisted_index_across_instances() {
+    // The MCP startup check must see docs written by a *previous* process
+    // (e.g. a prior `lw serve` run or a CLI ingest). Dropping the first
+    // searcher fully releases the writer lock.
+    let tmp = TempDir::new().unwrap();
+    {
+        let searcher = TantivySearcher::new(tmp.path()).unwrap();
+        let (path, page) = make_page("Persisted", &[], "persisted body");
+        searcher.index_page(&path, &page).unwrap();
+        searcher.commit().unwrap();
+    }
+    let reopened = TantivySearcher::new(tmp.path()).unwrap();
+    assert!(
+        !reopened.is_empty(),
+        "reopened index must see previously-persisted docs"
+    );
+}
