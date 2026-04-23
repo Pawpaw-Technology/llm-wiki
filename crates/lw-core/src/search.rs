@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
+    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
@@ -117,6 +117,15 @@ impl TantivySearcher {
             f_tags,
             f_category,
         })
+    }
+
+    /// Returns true if the on-disk index contains no committed documents.
+    ///
+    /// Callers use this to skip work that would otherwise open the
+    /// writer — e.g. a `lw serve` startup rebuild, which would hold
+    /// the writer lock for the server's lifetime.
+    pub fn is_empty(&self) -> bool {
+        self.reader.searcher().num_docs() == 0
     }
 
     fn category_from_path(rel_path: &str) -> String {

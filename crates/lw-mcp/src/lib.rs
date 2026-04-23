@@ -636,10 +636,15 @@ impl WikiMcpServer {
 
         let searcher = TantivySearcher::new(&index_dir)?;
         let wiki_dir = wiki_root.join("wiki");
+        // Rebuild only when the index is empty. A rebuild opens the
+        // writer and holds the lock for this server's lifetime, which
+        // would force any concurrent `lw query` onto the IndexLocked
+        // fallback path.
         if wiki_dir.exists()
+            && searcher.is_empty()
             && let Err(e) = searcher.rebuild(&wiki_dir)
         {
-            tracing::warn!("Failed to rebuild search index: {}", e);
+            tracing::warn!("Failed to build search index on first run: {}", e);
         }
 
         let searcher = Arc::new(searcher);
