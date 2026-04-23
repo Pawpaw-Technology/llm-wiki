@@ -325,9 +325,8 @@ fn rebuild_returns_index_locked_when_writer_held_elsewhere() {
 }
 
 // ---------------------------------------------------------------------------
-// is_empty — lets `lw serve` skip the startup rebuild when the on-disk index
-// is already populated, so it never opens the writer and concurrent
-// `lw query` rebuilds don't hit IndexLocked. See GitHub issue #55.
+// is_empty — gates any work that would open the writer lock on a fresh
+// index (e.g. `lw serve` startup rebuild).
 // ---------------------------------------------------------------------------
 
 #[test]

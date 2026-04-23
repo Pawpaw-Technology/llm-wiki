@@ -636,11 +636,10 @@ impl WikiMcpServer {
 
         let searcher = TantivySearcher::new(&index_dir)?;
         let wiki_dir = wiki_root.join("wiki");
-        // Trust-on-first-use: skip the startup rebuild when the index
-        // is already populated. Rebuild opens the writer and would hold
-        // the lock for the server's lifetime, forcing concurrent
-        // `lw query` calls onto the IndexLocked fallback path.
-        // See GitHub issue #55.
+        // Rebuild only when the index is empty. A rebuild opens the
+        // writer and holds the lock for this server's lifetime, which
+        // would force any concurrent `lw query` onto the IndexLocked
+        // fallback path.
         if wiki_dir.exists()
             && searcher.is_empty()
             && let Err(e) = searcher.rebuild(&wiki_dir)

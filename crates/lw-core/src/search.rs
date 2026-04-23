@@ -119,17 +119,12 @@ impl TantivySearcher {
         })
     }
 
-    /// Returns true if the on-disk index contains no documents.
+    /// Returns true if the on-disk index contains no committed documents.
     ///
-    /// Callers (notably `lw serve`) use this to skip a startup rebuild
-    /// when the index is already populated — rebuild opens the writer
-    /// and would block concurrent `lw query` rebuilds for the server's
-    /// lifetime. See GitHub issue #55.
+    /// Callers use this to skip work that would otherwise open the
+    /// writer — e.g. a `lw serve` startup rebuild, which would hold
+    /// the writer lock for the server's lifetime.
     pub fn is_empty(&self) -> bool {
-        // `num_docs` counts committed docs visible to the reader. The
-        // reader is built with `ReloadPolicy::Manual`, so reload first
-        // to catch docs persisted by a previous process.
-        let _ = self.reader.reload();
         self.reader.searcher().num_docs() == 0
     }
 

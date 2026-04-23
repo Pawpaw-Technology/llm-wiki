@@ -1,15 +1,6 @@
-//! Regression for GitHub issue #55.
-//!
-//! `lw serve` used to unconditionally rebuild the search index on startup.
-//! Rebuild opens the tantivy writer, which is then kept alive for the
-//! lifetime of the server. Any concurrent `lw query` that tries its own
-//! rebuild hits `IndexLocked` and has to fall back to the stale on-disk
-//! index — the consolation path added in v0.2.5.
-//!
-//! The fix (Option 1, trust-on-first-use): if the index already has docs,
-//! skip the startup rebuild. Subsequent MCP writes still lazy-open the
-//! writer on demand. Until a write happens, concurrent `lw query` can
-//! freely refresh the index.
+//! `WikiMcpServer::new` must not open the writer lock when the index
+//! is already populated; otherwise concurrent `lw query` rebuilds are
+//! forced onto the IndexLocked fallback for the server's lifetime.
 
 use lw_core::WikiError;
 use lw_core::fs::{init_wiki, validate_wiki_path, write_page};
