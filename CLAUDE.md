@@ -34,9 +34,10 @@ templates/           # starter vaults copied by `lw workspace add --template <na
 └── engineering-notes/
 
 integrations/        # declarative TOML adapters per agent tool
-├── claude-code.toml # full MCP + skills (1.0)
-├── codex.toml       # skills only in 1.0; auto-MCP in 1.1
-└── openclaw.toml    # skills only in 1.0
+├── claude-code.toml # MCP + skills; strong detection via `claude` binary probe
+├── codex.toml       # skills only in 1.0 (TOML MCP config not yet supported); strong detection via `codex` binary probe
+├── kimi.toml        # MCP + skills; strong detection via `kimi` binary probe
+└── openclaw.toml    # skills only in 1.0; weak detection (config_dir only, binary name unknown)
 
 installer/
 ├── install.sh       # POSIX, curl-installable, sha256-verified
@@ -70,6 +71,7 @@ Spec, plans, and smoke transcripts that documented the v0.2.0 product wrapper ro
 - Freshness is computed, never stored
 - Tags are free-form (not enumerated in schema); categories are directories
 - `_uncategorized/` is the fallback directory; lint reminds to categorize
+- Tantivy's `IndexWriter` is opened lazily on first write, not eagerly in `TantivySearcher::new`. `lw serve` would otherwise hold the writer lock for its lifetime and block every concurrent `lw query`. `WikiError::IndexLocked` lets read-only callers fall back to the existing index instead of failing.
 
 ## CLI Commands
 
@@ -163,6 +165,20 @@ Switching workspaces requires restarting the agent tool — MCP processes bind t
 - GitHub Actions: fmt, clippy, test (ubuntu + macos matrix)
 - Release workflow: cross-compile for 4 targets on tag push
 - Docker: multi-stage build, non-root runtime
+
+## Release ritual
+
+1. Bump `[workspace.package] version` in root `Cargo.toml`
+2. `cargo build -p lw-cli` — refresh `Cargo.lock`; verify `./target/debug/lw --version`
+3. `cargo test` — must be fully green before tagging
+4. `git commit -m "chore(release): bump version to X.Y.Z"` + `git push origin main` (admin override on branch protection; direct push is the established pattern for releases)
+5. `git tag -a vX.Y.Z -m "..."` + `git push origin vX.Y.Z` → triggers `.github/workflows/release.yml`
+6. `gh run watch <id>` until green; confirm GitHub Release lists 12 assets (4 tarballs + 4 sha256 + install.sh/uninstall.sh + 2 sha256)
+7. **Host smoke — don't skip.** Run the new binary through scenarios unit tests can't exercise:
+   - `lw upgrade` from the previous release; verify binary version bump
+   - `lw integrate <tool>` against an MCP entry written by an older lw (regression for the 0.2.0–0.2.3 cross-release Conflict bug)
+   - `lw query "..."` **while `lw serve` is running** against the same vault (regression for the 0.2.4 LockBusy bug)
+   - `lw doctor` — all integrations should report OK
 
 ## Observability
 
