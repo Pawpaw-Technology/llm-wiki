@@ -204,6 +204,58 @@ mod tests {
     }
 
     #[test]
+    fn merge_updates_cross_release_when_structure_matches() {
+        // Real-world scenario: v0.2.2 wrote the entry, user upgrades to
+        // v0.2.3 and reruns `lw integrate`. The only field that differs
+        // is `_lw_version`; command/args are what we'd write. This MUST
+        // be treated as a clean upgrade, not Conflict.
+        let mut cfg = json!({"mcpServers": {"llm-wiki": entry("0.2.2")}});
+        let outcome = merge_entry(
+            &mut cfg,
+            "mcpServers.llm-wiki",
+            entry("0.2.3"),
+            // The caller (integrate.rs) passes the *current* binary version
+            // as `expected_prev_version`, not the actual past version, so
+            // cross-release upgrades consistently fail under the old
+            // exact-match rule.
+            Some("0.2.3"),
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            MergeOutcome::Updated,
+            "expected Updated for cross-release upgrade"
+        );
+        assert_eq!(
+            cfg["mcpServers"]["llm-wiki"][VERSION_MARKER],
+            json!("0.2.3")
+        );
+    }
+
+    #[test]
+    fn merge_conflict_when_existing_has_unmanaged_extra_field() {
+        // User added an `env` key that `lw integrate` never writes. Even
+        // though the `_lw_version` markers would match, the extra field
+        // means we must NOT silently replace — the user's addition would
+        // be lost.
+        let mut user_extended = entry("0.2.3");
+        user_extended["env"] = json!({"LW_WIKI_ROOT": "/tmp/custom"});
+        let mut cfg = json!({"mcpServers": {"llm-wiki": user_extended.clone()}});
+        let outcome = merge_entry(
+            &mut cfg,
+            "mcpServers.llm-wiki",
+            entry("0.2.3"),
+            Some("0.2.3"),
+        )
+        .unwrap();
+        assert!(
+            matches!(outcome, MergeOutcome::Conflict { .. }),
+            "expected Conflict when existing entry has unmanaged extra field, got {outcome:?}"
+        );
+        assert_eq!(cfg["mcpServers"]["llm-wiki"], user_extended);
+    }
+
+    #[test]
     fn merge_preserves_sibling_entries() {
         let mut cfg = json!({
             "mcpServers": {
