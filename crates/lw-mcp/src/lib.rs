@@ -4,7 +4,7 @@
 use lw_core::fs::{category_from_path, list_pages, read_page, validate_wiki_path, write_page};
 use lw_core::git::{self, FreshnessLevel};
 use lw_core::ingest;
-use lw_core::page::Page;
+use lw_core::page::{Page, slugify};
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
 use lw_core::status::gather_status;
 use lw_core::tag::Taxonomy;
@@ -108,6 +108,57 @@ pub struct WikiIngestArgs {
 
 fn default_raw_type() -> String {
     "articles".to_string()
+}
+
+/// Build the success response body shared by both ingest paths.
+fn ingest_ok_payload(raw_path: &std::path::Path, args: &WikiIngestArgs) -> String {
+    serde_json::json!({
+        "status": "ok",
+        "raw_path": raw_path.to_string_lossy(),
+        "suggested_title": args.title,
+        "suggested_tags": args.tags,
+        "suggested_category": args.category,
+        "next_step": "Use wiki_write to create the wiki page from this source material.",
+    })
+    .to_string()
+}
+
+/// Pick the filename for a content-mode ingest. Priority:
+///   1. explicit `filename` arg (must already include an extension)
+///   2. slug(title)
+///   3. slug(first H1 in content)
+///   4. `untitled.md`
+///
+/// Returns an error string suitable for the tool's error payload on rejection.
+fn derive_content_filename(
+    filename: Option<&str>,
+    title: Option<&str>,
+    content: &str,
+) -> std::result::Result<String, String> {
+    if let Some(f) = filename {
+        let f = f.trim();
+        if f.is_empty() {
+            return Err("`filename` must not be empty".to_string());
+        }
+        if f.contains('/') || f.contains('\\') || f == ".." || f == "." {
+            return Err(format!(
+                "invalid filename `{f}`: must not contain path separators"
+            ));
+        }
+        return Ok(f.to_string());
+    }
+    let base = title
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(slugify)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            lw_core::ingest::extract_h1(content)
+                .map(|h| slugify(&h))
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "untitled".to_string());
+    Ok(format!("{base}.md"))
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -459,30 +510,44 @@ impl WikiMcpServer {
     /// Ingest source material into raw/. After ingesting, use wiki_write to create the corresponding wiki page.
     #[tool(
         name = "wiki_ingest",
-        description = "Copy source material into the wiki's raw/ directory and return metadata. After ingesting, use wiki_write to create the corresponding wiki page."
+        description = "File source material into the wiki's raw/ directory. Pass either `source_path` (absolute path to a local file or URL) OR `content` (pasted markdown string). With `content`, the filename is derived from `filename` > slug(`title`) > first H1 > `untitled.md`. After ingesting, use wiki_write to create the corresponding wiki page."
     )]
     async fn wiki_ingest(&self, Parameters(args): Parameters<WikiIngestArgs>) -> String {
-        // STUB — RED step. The content branch, mutual-exclusion check, and
-        // missing-input guard are filled in during the GREEN commit.
-        let Some(source_path) = args.source_path.as_deref() else {
-            return serde_json::json!({"error": "not implemented in RED stub"}).to_string();
-        };
+        match (args.source_path.as_deref(), args.content.as_deref()) {
+            (Some(_), Some(_)) => serde_json::json!({
+                "error": "pass either `source_path` or `content`, not both — they are mutually exclusive"
+            })
+            .to_string(),
+            (None, None) => serde_json::json!({
+                "error": "pass either `source_path` (file/URL) or `content` (pasted markdown)"
+            })
+            .to_string(),
+            (Some(source_path), None) => self.ingest_from_path(source_path, &args).await,
+            (None, Some(content)) => self.ingest_from_content(content, &args).await,
+        }
+    }
+
+    async fn ingest_from_path(&self, source_path: &str, args: &WikiIngestArgs) -> String {
         let source = PathBuf::from(source_path);
         if !source.exists() {
             return serde_json::json!({"error": format!("Source file not found: {source_path}")})
                 .to_string();
         }
-
         match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type).await {
-            Ok(result) => serde_json::json!({
-                "status": "ok",
-                "raw_path": result.raw_path.to_string_lossy(),
-                "suggested_title": args.title,
-                "suggested_tags": args.tags,
-                "suggested_category": args.category,
-                "next_step": "Use wiki_write to create the wiki page from this source material.",
-            })
-            .to_string(),
+            Ok(result) => ingest_ok_payload(&result.raw_path, args),
+            Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),
+        }
+    }
+
+    async fn ingest_from_content(&self, content: &str, args: &WikiIngestArgs) -> String {
+        let filename =
+            match derive_content_filename(args.filename.as_deref(), args.title.as_deref(), content)
+            {
+                Ok(f) => f,
+                Err(e) => return serde_json::json!({"error": e}).to_string(),
+            };
+        match ingest::ingest_content(&self.wiki_root, &args.raw_type, &filename, content).await {
+            Ok(result) => ingest_ok_payload(&result.raw_path, args),
             Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),
         }
     }

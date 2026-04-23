@@ -8,9 +8,11 @@ You are helping the user maintain an llm-wiki vault. The user has shared content
 
 ## Step 1 — Identify the input type
 
-- **URL**: a web link → fetch it (use `wiki_ingest` with the URL directly; the tool handles fetching and parsing).
-- **Pasted text**: raw markdown or prose → use `wiki_write` for full pages, or `wiki_ingest` from stdin.
-- **Local file path**: a file the user already has → pass the path to `wiki_ingest`.
+- **URL**: a web link → pass the URL as `source_path` to `wiki_ingest` (the tool handles fetching and parsing).
+- **Pasted text**: raw markdown or prose → pass it as `content` to `wiki_ingest` (preferred), or use `wiki_write` directly if it is already a finished wiki page. Do not stage pasted text to a temp file first; `content` is the MCP-native path.
+- **Local file path**: a file the user already has → pass the absolute path as `source_path` to `wiki_ingest`.
+
+`source_path` and `content` are mutually exclusive — pick one.
 
 ## Step 2 — Check scope
 
@@ -21,8 +23,8 @@ If `SCOPE.md` exists, judge whether the new content fits the documented Purpose 
 ## Step 3 — Route the content
 
 - **Clearly in scope**: ingest immediately.
-  - For URLs and files: `wiki_ingest` with `--raw-type articles` (or `papers` for arXiv-style links, `assets` for binary files).
-  - For pasted markdown that looks like a finished article: `wiki_ingest --stdin`.
+  - For URLs and files: `wiki_ingest` with `source_path` + `raw_type: "articles"` (or `"papers"` for arXiv-style links, `"assets"` for binary files).
+  - For pasted markdown: `wiki_ingest` with `content: "<the pasted text>"`. Optionally pass `title` (used to derive the filename slug) or an explicit `filename: "my-note.md"`. The tool creates `raw/<raw_type>/<filename>` in the vault — you do not need to stage the content anywhere first.
   - Suggest a category from the wiki's known categories (read `.lw/schema.toml` if needed).
 - **Clearly out of scope**: do not silently drop. Tell the user:
   > "This looks out of scope for your wiki (Purpose: <quote>). Want me to add it anyway, or skip?"

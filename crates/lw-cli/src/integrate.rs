@@ -1,8 +1,8 @@
 use crate::integrations::{
-    descriptor::{expand_tilde, Descriptor, DetectOutcome, McpFormat},
+    descriptor::{Descriptor, DetectOutcome, McpFormat, expand_tilde},
     integrations_root, load_all, mcp, skills,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::IsTerminal;
 
 pub struct IntegrateOpts {
