@@ -39,6 +39,27 @@ pub enum DetectOutcome {
     VersionCheckFailed { binary: String, reason: String },
 }
 
+impl DetectOutcome {
+    pub fn is_present(&self) -> bool {
+        matches!(self, DetectOutcome::Present)
+    }
+
+    /// Short human-readable skip reason shared by `integrate --auto` and
+    /// `lw doctor`. `None` means "don't report" (tool is healthy, or just
+    /// not installed — nothing to say).
+    pub fn skip_reason(&self) -> Option<String> {
+        match self {
+            DetectOutcome::Present | DetectOutcome::MissingConfigDir { .. } => None,
+            DetectOutcome::BinaryNotOnPath { binary } => {
+                Some(format!("binary `{binary}` not found on PATH"))
+            }
+            DetectOutcome::VersionCheckFailed { binary, reason } => {
+                Some(format!("`{binary}` version probe failed ({reason})"))
+            }
+        }
+    }
+}
+
 impl Detect {
     /// Probe args, defaulting to `["--version"]` when the descriptor omits `version_cmd`.
     pub fn effective_version_cmd(&self) -> Vec<String> {
@@ -134,25 +155,24 @@ const VERSION_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// On Unix we require at least one execute bit set; on non-Unix we accept
 /// any regular file match. Windows support for strong detection is out of
 /// scope for 1.0.
-pub fn binary_in_path(binary: &str) -> Option<PathBuf> {
+fn binary_in_path(binary: &str) -> Option<PathBuf> {
     let path_env = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_env) {
         let candidate = dir.join(binary);
-        if !candidate.is_file() {
+        let Ok(meta) = candidate.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
             continue;
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            match candidate.metadata() {
-                Ok(meta) if meta.permissions().mode() & 0o111 != 0 => return Some(candidate),
-                _ => continue,
+            if meta.permissions().mode() & 0o111 == 0 {
+                continue;
             }
         }
-        #[cfg(not(unix))]
-        {
-            return Some(candidate);
-        }
+        return Some(candidate);
     }
     None
 }
@@ -164,7 +184,7 @@ pub fn binary_in_path(binary: &str) -> Option<PathBuf> {
 /// enforce the deadline. If the deadline fires the thread (and the child it
 /// spawned) are detached and may outlive this call; that's acceptable for a
 /// one-shot CLI invocation and keeps us free of extra dependencies.
-pub fn run_version_check(
+fn run_version_check(
     binary: &std::path::Path,
     args: &[String],
     timeout: std::time::Duration,

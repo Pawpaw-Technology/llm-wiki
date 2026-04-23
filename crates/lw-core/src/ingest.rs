@@ -67,6 +67,24 @@ pub fn extract_h1(content: &str) -> Option<String> {
     None
 }
 
+/// Derive a filename slug from an optional title, falling back to the first
+/// H1 in `content`, then `"untitled"`. The returned slug is guaranteed
+/// non-empty and is suitable for both CLI stdin ingest and MCP content ingest.
+pub fn slug_from_title_or_h1(title: Option<&str>, content: &str) -> String {
+    use crate::page::slugify;
+    title
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(slugify)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            extract_h1(content)
+                .map(|h| slugify(&h))
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "untitled".to_string())
+}
+
 #[tracing::instrument]
 pub async fn ingest_source(
     wiki_root: &Path,

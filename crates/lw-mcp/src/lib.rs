@@ -4,7 +4,7 @@
 use lw_core::fs::{category_from_path, list_pages, read_page, validate_wiki_path, write_page};
 use lw_core::git::{self, FreshnessLevel};
 use lw_core::ingest;
-use lw_core::page::{Page, slugify};
+use lw_core::page::Page;
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
 use lw_core::status::gather_status;
 use lw_core::tag::Taxonomy;
@@ -123,13 +123,8 @@ fn ingest_ok_payload(raw_path: &std::path::Path, args: &WikiIngestArgs) -> Strin
     .to_string()
 }
 
-/// Pick the filename for a content-mode ingest. Priority:
-///   1. explicit `filename` arg (must already include an extension)
-///   2. slug(title)
-///   3. slug(first H1 in content)
-///   4. `untitled.md`
-///
-/// Returns an error string suitable for the tool's error payload on rejection.
+/// Pick the filename for a content-mode ingest. Priority: explicit
+/// `filename` > slug(title) > slug(first H1) > `untitled.md`.
 fn derive_content_filename(
     filename: Option<&str>,
     title: Option<&str>,
@@ -147,18 +142,10 @@ fn derive_content_filename(
         }
         return Ok(f.to_string());
     }
-    let base = title
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(slugify)
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            lw_core::ingest::extract_h1(content)
-                .map(|h| slugify(&h))
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "untitled".to_string());
-    Ok(format!("{base}.md"))
+    Ok(format!(
+        "{}.md",
+        ingest::slug_from_title_or_h1(title, content)
+    ))
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -529,10 +516,6 @@ impl WikiMcpServer {
 
     async fn ingest_from_path(&self, source_path: &str, args: &WikiIngestArgs) -> String {
         let source = PathBuf::from(source_path);
-        if !source.exists() {
-            return serde_json::json!({"error": format!("Source file not found: {source_path}")})
-                .to_string();
-        }
         match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type).await {
             Ok(result) => ingest_ok_payload(&result.raw_path, args),
             Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),

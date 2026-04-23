@@ -270,33 +270,34 @@ fn check_integrations() -> Vec<CheckResult> {
         }
     };
     for (id, desc) in descriptors {
-        match desc.detect() {
-            DetectOutcome::Present => {
-                out.extend(check_one_integration(&id, &desc));
-            }
+        let outcome = desc.detect();
+        let label = format!("integration: {id}");
+        if outcome.is_present() {
+            out.extend(check_one_integration(&id, &desc));
+            continue;
+        }
+        match outcome {
             DetectOutcome::MissingConfigDir { .. } => {
                 out.push(CheckResult::ok(
-                    format!("integration: {id}"),
+                    label,
                     format!("{} not detected — skipped", desc.name),
                 ));
             }
-            DetectOutcome::BinaryNotOnPath { binary } => {
+            DetectOutcome::BinaryNotOnPath { ref binary } => {
                 out.push(CheckResult::warn(
-                    format!("integration: {id}"),
-                    format!(
-                        "{} config dir present but `{binary}` not on PATH",
-                        desc.name
-                    ),
+                    label,
+                    format!("{}: {}", desc.name, outcome.skip_reason().unwrap()),
                     format!("install {} or ensure `{binary}` is on $PATH", desc.name),
                 ));
             }
-            DetectOutcome::VersionCheckFailed { binary, reason } => {
+            DetectOutcome::VersionCheckFailed { ref binary, .. } => {
                 out.push(CheckResult::warn(
-                    format!("integration: {id}"),
-                    format!("{}: `{binary}` version probe failed ({reason})", desc.name),
+                    label,
+                    format!("{}: {}", desc.name, outcome.skip_reason().unwrap()),
                     format!("verify `{binary}` runs; reinstall if broken"),
                 ));
             }
+            DetectOutcome::Present => unreachable!("handled above"),
         }
     }
     out

@@ -1,6 +1,6 @@
 use crate::output::Format;
 use lw_core::fs::load_schema;
-use lw_core::ingest::ingest_source;
+use lw_core::ingest::{extract_h1, ingest_source, slug_from_title_or_h1};
 use lw_core::page::slugify;
 use serde::Serialize;
 use std::io::{self, Read};
@@ -107,21 +107,11 @@ pub fn run(
     let source_path = if stdin_mode {
         let mut content = String::new();
         io::stdin().lock().read_to_string(&mut content)?;
-        // Derive a deterministic filename from --title (or H1 from content),
-        // so the copy in raw/ has a meaningful name instead of a random tempfile prefix.
-        // We write into a fresh tempdir so ingest_source().file_name() picks up our chosen name.
-        let stdin_title = title
-            .clone()
-            .or_else(|| extract_h1(&content))
-            .unwrap_or_else(|| "untitled".to_string());
-        let slug = slugify(&stdin_title);
-        let slug = if slug.is_empty() {
-            "untitled".to_string()
-        } else {
-            slug
-        };
+        // Stage in a tempdir so `ingest_source` picks up the slug-derived
+        // name rather than a random tempfile prefix.
+        let slug = slug_from_title_or_h1(title.as_deref(), &content);
         let dir = tempfile::tempdir()?;
-        let file_path = dir.path().join(format!("{}.md", slug));
+        let file_path = dir.path().join(format!("{slug}.md"));
         std::fs::write(&file_path, &content)?;
         _stdin_temp_dir = dir;
         _stdin_file_path = file_path;
@@ -199,21 +189,6 @@ pub fn run(
     }
 
     Ok(())
-}
-
-/// Extract the first H1 heading from markdown content.
-/// Returns None if no H1 is found.
-fn extract_h1(content: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(title) = trimmed.strip_prefix("# ") {
-            let title = title.trim();
-            if !title.is_empty() {
-                return Some(title.to_string());
-            }
-        }
-    }
-    None
 }
 
 /// Derive a title for an ingested page.

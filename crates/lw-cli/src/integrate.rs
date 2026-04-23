@@ -1,5 +1,5 @@
 use crate::integrations::{
-    descriptor::{Descriptor, DetectOutcome, McpFormat, expand_tilde},
+    descriptor::{Descriptor, McpFormat, expand_tilde},
     integrations_root, load_all, mcp, skills,
 };
 use serde_json::{Value, json};
@@ -25,23 +25,15 @@ pub fn run(target: Option<&str>, opts: IntegrateOpts) -> anyhow::Result<()> {
             // failure modes are surfaced so the user knows why we skipped.
             descriptors
                 .into_iter()
-                .filter_map(|(id, d)| match d.detect() {
-                    DetectOutcome::Present => Some((id, d)),
-                    DetectOutcome::MissingConfigDir { .. } => None,
-                    DetectOutcome::BinaryNotOnPath { binary } => {
-                        println!(
-                            "Skipping {} ({id}): binary `{binary}` not found on PATH",
-                            d.name
-                        );
-                        None
+                .filter_map(|(id, d)| {
+                    let outcome = d.detect();
+                    if outcome.is_present() {
+                        return Some((id, d));
                     }
-                    DetectOutcome::VersionCheckFailed { binary, reason } => {
-                        println!(
-                            "Skipping {} ({id}): `{binary}` version probe failed ({reason})",
-                            d.name
-                        );
-                        None
+                    if let Some(reason) = outcome.skip_reason() {
+                        println!("Skipping {} ({id}): {reason}", d.name);
                     }
+                    None
                 })
                 .collect()
         }
