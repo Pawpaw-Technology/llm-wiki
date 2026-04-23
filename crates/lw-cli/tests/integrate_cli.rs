@@ -148,6 +148,167 @@ fn integrate_preserves_other_mcp_entries() {
     assert!(!entries.is_empty(), "expected at least one backup file");
 }
 
+/// Build a descriptor TOML that declares strong detection (binary + version_cmd).
+fn make_strong_descriptor(
+    integrations: &std::path::Path,
+    fake_home: &std::path::Path,
+    id: &str,
+    binary: &str,
+    version_cmd: &[&str],
+) {
+    std::fs::create_dir_all(integrations).unwrap();
+    let cfg_dir = fake_home.join(format!(".{id}"));
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    let settings_path = cfg_dir.join("settings.json");
+    let skills_target = cfg_dir.join("skills/llm-wiki/");
+
+    let version_cmd_toml = version_cmd
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let toml = format!(
+        r#"
+name = "Fake {id}"
+
+[detect]
+config_dir = "{}"
+binary = "{binary}"
+version_cmd = [{version_cmd_toml}]
+
+[mcp]
+config_path = "{}"
+format = "json"
+key_path = "mcpServers.llm-wiki"
+command = "lw"
+args = ["serve"]
+
+[skills]
+target_dir = "{}"
+mode = "symlink"
+"#,
+        cfg_dir.display(),
+        settings_path.display(),
+        skills_target.display()
+    );
+    std::fs::write(integrations.join(format!("{id}.toml")), toml).unwrap();
+}
+
+/// Drop a shell script at `bin_dir/name` that exits with `exit_code`, and mark it executable.
+fn stage_fake_binary(bin_dir: &std::path::Path, name: &str, exit_code: i32) {
+    std::fs::create_dir_all(bin_dir).unwrap();
+    let path = bin_dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\nexit {exit_code}\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn integrate_auto_skips_when_binary_missing_from_path() {
+    let env_home = TempDir::new().unwrap();
+    let integrations = TempDir::new().unwrap();
+    let skills = TempDir::new().unwrap();
+    let fake_home = TempDir::new().unwrap();
+    let fake_path = TempDir::new().unwrap(); // empty PATH — no binaries at all
+
+    make_strong_descriptor(
+        integrations.path(),
+        fake_home.path(),
+        "ghostbin",
+        "lw-probe-ghost-zzz",
+        &["--version"],
+    );
+    make_skills(skills.path());
+
+    lw(env_home.path(), integrations.path(), skills.path())
+        .env("PATH", fake_path.path())
+        .args(["integrate", "--auto", "--yes"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("lw-probe-ghost-zzz")
+                .and(predicate::str::contains("not").and(predicate::str::contains("PATH"))),
+        );
+
+    // Must NOT have installed the MCP entry.
+    let settings_path = fake_home.path().join(".ghostbin/settings.json");
+    assert!(
+        !settings_path.exists(),
+        "MCP config should not be written when binary is not detected"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn integrate_auto_skips_when_version_probe_fails() {
+    let env_home = TempDir::new().unwrap();
+    let integrations = TempDir::new().unwrap();
+    let skills = TempDir::new().unwrap();
+    let fake_home = TempDir::new().unwrap();
+    let fake_path = TempDir::new().unwrap();
+
+    stage_fake_binary(fake_path.path(), "brokenbin", 1);
+    make_strong_descriptor(
+        integrations.path(),
+        fake_home.path(),
+        "brokenbin",
+        "brokenbin",
+        &["--version"],
+    );
+    make_skills(skills.path());
+
+    lw(env_home.path(), integrations.path(), skills.path())
+        .env("PATH", fake_path.path())
+        .args(["integrate", "--auto", "--yes"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("brokenbin")
+                .and(predicate::str::contains("version").or(predicate::str::contains("probe"))),
+        );
+
+    let settings_path = fake_home.path().join(".brokenbin/settings.json");
+    assert!(!settings_path.exists());
+}
+
+#[test]
+#[serial_test::serial]
+fn integrate_auto_installs_when_binary_and_version_ok() {
+    let env_home = TempDir::new().unwrap();
+    let integrations = TempDir::new().unwrap();
+    let skills = TempDir::new().unwrap();
+    let fake_home = TempDir::new().unwrap();
+    let fake_path = TempDir::new().unwrap();
+
+    stage_fake_binary(fake_path.path(), "goodbin", 0);
+    make_strong_descriptor(
+        integrations.path(),
+        fake_home.path(),
+        "goodbin",
+        "goodbin",
+        &["--version"],
+    );
+    make_skills(skills.path());
+
+    lw(env_home.path(), integrations.path(), skills.path())
+        .env("PATH", fake_path.path())
+        .args(["integrate", "--auto", "--yes"])
+        .assert()
+        .success();
+
+    let settings_path = fake_home.path().join(".goodbin/settings.json");
+    let settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    assert_eq!(settings["mcpServers"]["llm-wiki"]["command"], "lw");
+}
+
 #[test]
 #[serial_test::serial]
 fn integrate_auto_with_no_tools_succeeds() {
