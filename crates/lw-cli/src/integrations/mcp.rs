@@ -20,18 +20,18 @@ pub enum MergeOutcome {
 /// Merge a managed entry into a JSON config.
 ///
 /// `key_path` is dot-separated (e.g., "mcpServers.llm-wiki").
-/// `entry` MUST contain a `_lw_version` field; it will be added if missing.
-/// `expected_prev_version` is the version we last shipped; if the existing entry's
-/// `_lw_version` matches, we treat it as an unmodified upgrade and replace silently.
-/// If it does not match (or `_lw_version` is absent), we treat it as user-edited
-/// and return `Conflict` without modifying.
+/// `entry` MUST contain a `_lw_version` field.
+///
+/// Conflict detection works on structure, not version: an existing entry is a
+/// clean upgrade (`Updated`) when its fields other than `_lw_version` equal
+/// what we'd write. Any structural divergence — different `command`/`args`,
+/// or extra user-added fields we don't manage — yields `Conflict` so the
+/// user's customization survives.
 pub fn merge_entry(
     config: &mut Value,
     key_path: &str,
     entry: Value,
-    expected_prev_version: Option<&str>,
 ) -> anyhow::Result<MergeOutcome> {
-    // Ensure entry has a version marker
     if !entry
         .as_object()
         .map(|o| o.contains_key(VERSION_MARKER))
@@ -43,7 +43,6 @@ pub fn merge_entry(
     let parts: Vec<&str> = key_path.split('.').collect();
     let (last, parents) = parts.split_last().unwrap();
 
-    // Walk / create parents
     let mut cursor = config;
     for p in parents {
         if !cursor.is_object() {
@@ -65,19 +64,29 @@ pub fn merge_entry(
             Ok(MergeOutcome::Inserted)
         }
         Some(existing) if existing == &entry => Ok(MergeOutcome::NoOp),
-        Some(existing) => {
-            let existing_ver = existing.get(VERSION_MARKER).and_then(|v| v.as_str());
-            match (existing_ver, expected_prev_version) {
-                (Some(ev), Some(pv)) if ev == pv => {
-                    obj.insert((*last).to_string(), entry);
-                    Ok(MergeOutcome::Updated)
-                }
-                _ => Ok(MergeOutcome::Conflict {
-                    existing: existing.clone(),
-                }),
-            }
+        Some(existing) if managed_fields_match(existing, &entry) => {
+            obj.insert((*last).to_string(), entry);
+            Ok(MergeOutcome::Updated)
         }
+        Some(existing) => Ok(MergeOutcome::Conflict {
+            existing: existing.clone(),
+        }),
     }
+}
+
+/// True when two entries agree on every field except `_lw_version`. Used to
+/// distinguish a plain version-marker bump from a real user edit.
+fn managed_fields_match(a: &Value, b: &Value) -> bool {
+    let (Some(a_obj), Some(b_obj)) = (a.as_object(), b.as_object()) else {
+        return false;
+    };
+    let strip = |obj: &Map<String, Value>| -> Map<String, Value> {
+        obj.iter()
+            .filter(|(k, _)| k.as_str() != VERSION_MARKER)
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    };
+    strip(a_obj) == strip(b_obj)
 }
 
 /// Atomically write a JSON file: backup → temp → fsync → rename.
@@ -145,7 +154,7 @@ mod tests {
     #[test]
     fn merge_inserts_when_absent() {
         let mut cfg = json!({});
-        let outcome = merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.0"), None).unwrap();
+        let outcome = merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.0")).unwrap();
         assert_eq!(outcome, MergeOutcome::Inserted);
         assert_eq!(
             cfg["mcpServers"]["llm-wiki"][VERSION_MARKER],
@@ -156,26 +165,14 @@ mod tests {
     #[test]
     fn merge_noop_when_identical() {
         let mut cfg = json!({"mcpServers": {"llm-wiki": entry("0.2.0")}});
-        let outcome = merge_entry(
-            &mut cfg,
-            "mcpServers.llm-wiki",
-            entry("0.2.0"),
-            Some("0.2.0"),
-        )
-        .unwrap();
+        let outcome = merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.0")).unwrap();
         assert_eq!(outcome, MergeOutcome::NoOp);
     }
 
     #[test]
-    fn merge_updates_when_prev_version_matches() {
+    fn merge_updates_when_only_version_differs() {
         let mut cfg = json!({"mcpServers": {"llm-wiki": entry("0.1.0")}});
-        let outcome = merge_entry(
-            &mut cfg,
-            "mcpServers.llm-wiki",
-            entry("0.2.0"),
-            Some("0.1.0"),
-        )
-        .unwrap();
+        let outcome = merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.0")).unwrap();
         assert_eq!(outcome, MergeOutcome::Updated);
         assert_eq!(
             cfg["mcpServers"]["llm-wiki"][VERSION_MARKER],
@@ -188,18 +185,11 @@ mod tests {
         let mut user_edited = entry("0.1.0");
         user_edited["args"] = json!(["serve", "--root", "/custom"]);
         let mut cfg = json!({"mcpServers": {"llm-wiki": user_edited.clone()}});
-        let outcome = merge_entry(
-            &mut cfg,
-            "mcpServers.llm-wiki",
-            entry("0.2.0"),
-            Some("0.0.1"),
-        )
-        .unwrap();
+        let outcome = merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.0")).unwrap();
         match outcome {
             MergeOutcome::Conflict { existing } => assert_eq!(existing, user_edited),
             _ => panic!("expected Conflict"),
         }
-        // Config must be unchanged
         assert_eq!(cfg["mcpServers"]["llm-wiki"], user_edited);
     }
 
@@ -210,17 +200,7 @@ mod tests {
         // is `_lw_version`; command/args are what we'd write. This MUST
         // be treated as a clean upgrade, not Conflict.
         let mut cfg = json!({"mcpServers": {"llm-wiki": entry("0.2.2")}});
-        let outcome = merge_entry(
-            &mut cfg,
-            "mcpServers.llm-wiki",
-            entry("0.2.3"),
-            // The caller (integrate.rs) passes the *current* binary version
-            // as `expected_prev_version`, not the actual past version, so
-            // cross-release upgrades consistently fail under the old
-            // exact-match rule.
-            Some("0.2.3"),
-        )
-        .unwrap();
+        let outcome = merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.3")).unwrap();
         assert_eq!(
             outcome,
             MergeOutcome::Updated,
@@ -241,13 +221,7 @@ mod tests {
         let mut user_extended = entry("0.2.3");
         user_extended["env"] = json!({"LW_WIKI_ROOT": "/tmp/custom"});
         let mut cfg = json!({"mcpServers": {"llm-wiki": user_extended.clone()}});
-        let outcome = merge_entry(
-            &mut cfg,
-            "mcpServers.llm-wiki",
-            entry("0.2.3"),
-            Some("0.2.3"),
-        )
-        .unwrap();
+        let outcome = merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.3")).unwrap();
         assert!(
             matches!(outcome, MergeOutcome::Conflict { .. }),
             "expected Conflict when existing entry has unmanaged extra field, got {outcome:?}"
@@ -264,13 +238,7 @@ mod tests {
             },
             "permissions": {"allow": ["foo"]},
         });
-        merge_entry(
-            &mut cfg,
-            "mcpServers.llm-wiki",
-            entry("0.2.0"),
-            Some("0.1.0"),
-        )
-        .unwrap();
+        merge_entry(&mut cfg, "mcpServers.llm-wiki", entry("0.2.0")).unwrap();
         assert_eq!(cfg["mcpServers"]["other-tool"], json!({"command": "other"}));
         assert_eq!(cfg["permissions"]["allow"], json!(["foo"]));
     }
@@ -279,7 +247,7 @@ mod tests {
     fn merge_rejects_entry_without_version_marker() {
         let mut cfg = json!({});
         let bad = json!({"command": "lw", "args": ["serve"]});
-        let result = merge_entry(&mut cfg, "mcpServers.llm-wiki", bad, None);
+        let result = merge_entry(&mut cfg, "mcpServers.llm-wiki", bad);
         assert!(result.is_err());
     }
 

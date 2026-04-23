@@ -96,7 +96,7 @@ fn install_one(id: &str, desc: &Descriptor) -> anyhow::Result<()> {
             "args": mcp_cfg.args,
             mcp::VERSION_MARKER: VERSION,
         });
-        let outcome = mcp::merge_entry(&mut config, &mcp_cfg.key_path, entry, Some(VERSION))?;
+        let outcome = mcp::merge_entry(&mut config, &mcp_cfg.key_path, entry)?;
         match outcome {
             mcp::MergeOutcome::Inserted => {
                 println!("  MCP entry inserted at {}", path.display())
