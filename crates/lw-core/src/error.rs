@@ -37,6 +37,11 @@ pub enum WikiError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error(
+        "index at {path} is locked by another lw process (likely `lw serve`) — try again once it exits"
+    )]
+    IndexLocked { path: PathBuf },
 }
 
 pub type Result<T> = std::result::Result<T, WikiError>;

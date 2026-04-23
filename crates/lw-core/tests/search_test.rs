@@ -1,5 +1,6 @@
 use lw_core::page::Page;
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
+use lw_core::WikiError;
 use tempfile::TempDir;
 
 fn make_page(title: &str, tags: &[&str], body: &str) -> (String, Page) {
@@ -250,4 +251,75 @@ fn search_mixed_chinese_english() {
         limit: 10,
     };
     assert!(searcher.search(&q2).unwrap().total >= 1);
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent-reader / writer-lock tests
+//
+// Tantivy's index writer holds an exclusive lockfile on the index directory.
+// `lw serve` opens a writer for its lifetime (incremental MCP writes); the
+// CLI's `lw query` used to also open one eagerly for its startup rebuild,
+// so both contended on the lock and the CLI failed with LockBusy any time
+// an MCP was up. The fix: writers lazy, reads never acquire one, rebuild
+// surfaces a distinct IndexLocked error so the query path can degrade to
+// read-only instead of bailing out.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn new_does_not_hold_writer_lock() {
+    // Two searchers pointing at the same dir must both construct without
+    // either touching the writer lock. Under the old eager-writer impl the
+    // second `new` call fails with LockBusy.
+    let tmp = TempDir::new().unwrap();
+    let _first = TantivySearcher::new(tmp.path()).unwrap();
+    let _second = TantivySearcher::new(tmp.path())
+        .expect("second searcher must open without writer contention");
+}
+
+#[test]
+fn read_path_works_while_another_searcher_holds_writer() {
+    let tmp = TempDir::new().unwrap();
+
+    // Searcher A seeds the index and keeps the writer open (simulates
+    // `lw serve` after startup).
+    let searcher_a = TantivySearcher::new(tmp.path()).unwrap();
+    let (path, page) = make_page("Attention", &[], "Self-attention mechanism.");
+    searcher_a.index_page(&path, &page).unwrap();
+    searcher_a.commit().unwrap();
+
+    // Searcher B opens the same dir and searches without ever writing.
+    // Must not hit LockBusy.
+    let searcher_b = TantivySearcher::new(tmp.path())
+        .expect("read-only searcher must open while writer is held elsewhere");
+    let q = SearchQuery {
+        text: Some("attention".into()),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    let results = searcher_b.search(&q).unwrap();
+    assert_eq!(results.total, 1);
+}
+
+#[test]
+fn rebuild_returns_index_locked_when_writer_held_elsewhere() {
+    let tmp = TempDir::new().unwrap();
+
+    // Searcher A takes the writer by doing any write.
+    let searcher_a = TantivySearcher::new(tmp.path()).unwrap();
+    let (path, page) = make_page("A", &[], "body");
+    searcher_a.index_page(&path, &page).unwrap();
+    searcher_a.commit().unwrap();
+
+    // Searcher B tries to rebuild — it needs the writer, so it should
+    // report IndexLocked (distinct from a generic TantivyError) so the
+    // CLI can catch it and fall back to query-without-rebuild.
+    let searcher_b = TantivySearcher::new(tmp.path()).unwrap();
+    let err = searcher_b
+        .rebuild(tmp.path())
+        .expect_err("rebuild must fail when writer is busy");
+    assert!(
+        matches!(err, WikiError::IndexLocked { .. }),
+        "expected IndexLocked, got {err:?}"
+    );
 }
