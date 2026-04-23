@@ -30,7 +30,7 @@ jobs:
             os: macos-latest
             asset: lw-aarch64-darwin.tar.gz
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -73,7 +73,7 @@ jobs:
           tar -C stage -czf dist/${{ matrix.asset }} .
           shasum -a 256 dist/${{ matrix.asset }} | awk '{print $1"  "$2}' > dist/${{ matrix.asset }}.sha256
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: dist/${{ matrix.asset }}*
@@ -82,7 +82,7 @@ jobs:
     name: Publish install.sh as separate asset
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Stage installer + sha256
         run: |
           mkdir -p dist
@@ -90,7 +90,7 @@ jobs:
           cp installer/uninstall.sh dist/uninstall.sh
           shasum -a 256 dist/install.sh | awk '{print $1"  "$2}' > dist/install.sh.sha256
           shasum -a 256 dist/uninstall.sh | awk '{print $1"  "$2}' > dist/uninstall.sh.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: installer-scripts
           path: dist/*
@@ -100,9 +100,9 @@ jobs:
     needs: [build, publish-installer]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
