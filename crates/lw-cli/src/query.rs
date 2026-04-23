@@ -1,7 +1,8 @@
 use crate::output::{self, Format};
 use lw_core::fs::load_schema;
-use lw_core::git::{FreshnessLevel, page_freshness};
+use lw_core::git::{page_freshness, FreshnessLevel};
 use lw_core::search::{SearchHit, SearchQuery, Searcher, TantivySearcher};
+use lw_core::WikiError;
 use std::path::Path;
 
 /// A search hit enriched with freshness information.
@@ -51,10 +52,20 @@ pub fn run(
     std::fs::create_dir_all(&index_dir)?;
     let searcher = TantivySearcher::new(&index_dir)?;
 
-    // CLI rebuilds on every query. The MCP server (lw serve) holds a persistent
-    // index with incremental updates — use that for repeated queries.
+    // CLI rebuilds on every query so stand-alone use sees on-disk edits.
+    // If an MCP server (`lw serve`) is already holding the writer lock for
+    // incremental updates, we can't rebuild in parallel — fall back to the
+    // existing on-disk index instead of failing the whole command.
     let wiki_dir = root.join("wiki");
-    searcher.rebuild(&wiki_dir)?;
+    match searcher.rebuild(&wiki_dir) {
+        Ok(()) => {}
+        Err(WikiError::IndexLocked { .. }) => {
+            eprintln!(
+                "note: index is locked by another lw process (likely `lw serve`); querying the existing index without rebuild"
+            );
+        }
+        Err(e) => return Err(e.into()),
+    }
 
     let query = SearchQuery {
         text: if text.is_empty() {

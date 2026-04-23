@@ -1,11 +1,11 @@
 use crate::page::Page;
 use crate::{Result, WikiError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{
-    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
+    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
@@ -61,8 +61,11 @@ pub trait Searcher: Send + Sync {
 
 pub struct TantivySearcher {
     index: Index,
+    index_dir: PathBuf,
     reader: IndexReader,
-    writer: Mutex<IndexWriter>,
+    /// Opened lazily: only writes need it, and holding it eagerly would
+    /// lock out every other `lw` process pointed at the same vault.
+    writer: Mutex<Option<IndexWriter>>,
     f_path: Field,
     f_title: Field,
     f_body: Field,
@@ -103,12 +106,11 @@ impl TantivySearcher {
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
 
-        let writer = index.writer(50_000_000)?;
-
         Ok(Self {
             index,
+            index_dir: index_dir.to_path_buf(),
             reader,
-            writer: Mutex::new(writer),
+            writer: Mutex::new(None),
             f_path,
             f_title,
             f_body,
@@ -120,54 +122,80 @@ impl TantivySearcher {
     fn category_from_path(rel_path: &str) -> String {
         crate::fs::category_from_path(std::path::Path::new(rel_path)).unwrap_or_default()
     }
+
+    /// Run `op` with the lazily-opened writer. Translates tantivy's
+    /// `LockFailure` into the typed `WikiError::IndexLocked` so callers
+    /// (e.g. CLI query) can fall back to read-only mode instead of
+    /// bubbling a generic index error to the user.
+    fn with_writer<T>(&self, op: impl FnOnce(&mut IndexWriter) -> Result<T>) -> Result<T> {
+        let mut guard = self
+            .writer
+            .lock()
+            .map_err(|e| WikiError::Internal(e.to_string()))?;
+        if guard.is_none() {
+            match self.index.writer(50_000_000) {
+                Ok(w) => *guard = Some(w),
+                Err(tantivy::TantivyError::LockFailure(..)) => {
+                    return Err(WikiError::IndexLocked {
+                        path: self.index_dir.clone(),
+                    });
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        op(guard.as_mut().expect("writer opened above"))
+    }
 }
 
 impl Searcher for TantivySearcher {
     #[tracing::instrument(skip(self, page))]
     fn index_page(&self, rel_path: &str, page: &Page) -> Result<()> {
-        let writer = self
-            .writer
-            .lock()
-            .map_err(|e| WikiError::Internal(e.to_string()))?;
-
-        // Remove any previous version of this page.
-        let path_term = Term::from_field_text(self.f_path, rel_path);
-        writer.delete_term(path_term);
-
+        let f_path = self.f_path;
+        let f_title = self.f_title;
+        let f_body = self.f_body;
+        let f_tags = self.f_tags;
+        let f_category = self.f_category;
         let category = Self::category_from_path(rel_path);
+        let rel_path = rel_path.to_string();
+        let page_title = page.title.clone();
+        let page_body = page.body.clone();
+        let page_tags = page.tags.clone();
 
-        let mut doc = TantivyDocument::new();
-        doc.add_text(self.f_path, rel_path);
-        doc.add_text(self.f_title, &page.title);
-        doc.add_text(self.f_body, &page.body);
-        // Multi-value tags: each tag is a separate field value.
-        for tag in &page.tags {
-            doc.add_text(self.f_tags, tag);
-        }
-        doc.add_text(self.f_category, &category);
+        self.with_writer(|writer| {
+            let path_term = Term::from_field_text(f_path, &rel_path);
+            writer.delete_term(path_term);
 
-        writer.add_document(doc)?;
-        Ok(())
+            let mut doc = TantivyDocument::new();
+            doc.add_text(f_path, &rel_path);
+            doc.add_text(f_title, &page_title);
+            doc.add_text(f_body, &page_body);
+            for tag in &page_tags {
+                doc.add_text(f_tags, tag);
+            }
+            doc.add_text(f_category, &category);
+
+            writer.add_document(doc)?;
+            Ok(())
+        })
     }
 
     #[tracing::instrument(skip(self))]
     fn remove_page(&self, rel_path: &str) -> Result<()> {
-        let writer = self
-            .writer
-            .lock()
-            .map_err(|e| WikiError::Internal(e.to_string()))?;
-        let path_term = Term::from_field_text(self.f_path, rel_path);
-        writer.delete_term(path_term);
-        Ok(())
+        let f_path = self.f_path;
+        let rel_path = rel_path.to_string();
+        self.with_writer(|writer| {
+            let path_term = Term::from_field_text(f_path, &rel_path);
+            writer.delete_term(path_term);
+            Ok(())
+        })
     }
 
     #[tracing::instrument(skip(self))]
     fn commit(&self) -> Result<()> {
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|e| WikiError::Internal(e.to_string()))?;
-        writer.commit()?;
+        self.with_writer(|writer| {
+            writer.commit()?;
+            Ok(())
+        })?;
         self.reader.reload()?;
         Ok(())
     }
@@ -275,17 +303,12 @@ impl Searcher for TantivySearcher {
 
     #[tracing::instrument(skip(self))]
     fn rebuild(&self, wiki_dir: &Path) -> Result<()> {
-        // Clear all documents.
-        {
-            let writer = self
-                .writer
-                .lock()
-                .map_err(|e| WikiError::Internal(e.to_string()))?;
+        self.with_writer(|writer| {
             writer.delete_all_documents()?;
-        }
+            Ok(())
+        })?;
         self.commit()?;
 
-        // Re-index all pages from disk.
         let pages = crate::fs::list_pages(wiki_dir)?;
         for rel_path in &pages {
             let abs_path = wiki_dir.join(rel_path);
