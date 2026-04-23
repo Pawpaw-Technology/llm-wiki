@@ -1,8 +1,23 @@
 use crate::Result;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug)]
 pub struct IngestResult {
     pub raw_path: PathBuf,
+}
+
+/// STUB — RED step. Replaced in the GREEN commit with real content write.
+#[tracing::instrument(skip(content))]
+pub async fn ingest_content(
+    _wiki_root: &Path,
+    _raw_subdir: &str,
+    _filename: &str,
+    content: &str,
+) -> Result<IngestResult> {
+    let _ = content;
+    Ok(IngestResult {
+        raw_path: PathBuf::new(),
+    })
 }
 
 #[tracing::instrument]

@@ -80,8 +80,18 @@ fn default_write_mode() -> String {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WikiIngestArgs {
-    /// Absolute path to source file
-    pub source_path: String,
+    /// Absolute path to source file. Mutually exclusive with `content`.
+    #[serde(default)]
+    pub source_path: Option<String>,
+    /// Pasted markdown to file directly into raw/ — the MCP-native replacement
+    /// for the CLI's `--stdin` flag. Mutually exclusive with `source_path`.
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Explicit filename (e.g. `my-note.md`) used when `content` is provided.
+    /// Must not contain path separators. When omitted, the filename is derived
+    /// from `title`, the first H1 in `content`, or `untitled.md` in that order.
+    #[serde(default)]
+    pub filename: Option<String>,
     /// Target subdirectory under raw/ (papers, articles, assets)
     #[serde(default = "default_raw_type")]
     pub raw_type: String,
@@ -452,9 +462,15 @@ impl WikiMcpServer {
         description = "Copy source material into the wiki's raw/ directory and return metadata. After ingesting, use wiki_write to create the corresponding wiki page."
     )]
     async fn wiki_ingest(&self, Parameters(args): Parameters<WikiIngestArgs>) -> String {
-        let source = PathBuf::from(&args.source_path);
+        // STUB — RED step. The content branch, mutual-exclusion check, and
+        // missing-input guard are filled in during the GREEN commit.
+        let Some(source_path) = args.source_path.as_deref() else {
+            return serde_json::json!({"error": "not implemented in RED stub"}).to_string();
+        };
+        let source = PathBuf::from(source_path);
         if !source.exists() {
-            return serde_json::json!({"error": format!("Source file not found: {}", args.source_path)}).to_string();
+            return serde_json::json!({"error": format!("Source file not found: {source_path}")})
+                .to_string();
         }
 
         match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type).await {
@@ -596,4 +612,139 @@ pub async fn run_stdio(wiki_root: PathBuf) -> anyhow::Result<()> {
     let service = server.serve(transport).await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lw_core::fs::init_wiki;
+    use lw_core::schema::WikiSchema;
+    use rmcp::handler::server::wrapper::Parameters;
+    use tempfile::TempDir;
+
+    fn spawn_server() -> (TempDir, WikiMcpServer) {
+        let tmp = TempDir::new().unwrap();
+        init_wiki(tmp.path(), &WikiSchema::default()).unwrap();
+        let server = WikiMcpServer::new(tmp.path().to_path_buf()).unwrap();
+        (tmp, server)
+    }
+
+    fn ingest_args(
+        source_path: Option<&str>,
+        content: Option<&str>,
+        filename: Option<&str>,
+        title: Option<&str>,
+    ) -> WikiIngestArgs {
+        WikiIngestArgs {
+            source_path: source_path.map(String::from),
+            content: content.map(String::from),
+            filename: filename.map(String::from),
+            raw_type: "articles".to_string(),
+            title: title.map(String::from),
+            tags: None,
+            category: None,
+        }
+    }
+
+    /// Parse the tool's JSON string response. Panics on bad JSON so the
+    /// assertion site shows the raw body in the failure message.
+    fn parse(resp: &str) -> serde_json::Value {
+        serde_json::from_str(resp)
+            .unwrap_or_else(|e| panic!("tool returned invalid JSON ({e}): {resp}"))
+    }
+
+    #[tokio::test]
+    async fn ingest_with_content_and_title_writes_slug_derived_file() {
+        let (tmp, server) = spawn_server();
+        let body = "# Attention\n\nSelf-attention replaced recurrence.";
+        let args = ingest_args(None, Some(body), None, Some("My Article"));
+
+        let resp = server.wiki_ingest(Parameters(args)).await;
+        let v = parse(&resp);
+
+        assert_eq!(v["status"], "ok", "expected ok, got: {resp}");
+        let raw_path = v["raw_path"].as_str().unwrap();
+        let expected = tmp.path().join("raw/articles/my-article.md");
+        assert_eq!(std::path::Path::new(raw_path), expected);
+        assert_eq!(std::fs::read_to_string(&expected).unwrap(), body);
+    }
+
+    #[tokio::test]
+    async fn ingest_with_content_derives_filename_from_h1_when_no_title() {
+        let (tmp, server) = spawn_server();
+        let body = "# Transformer Basics\n\nBody here.";
+        let args = ingest_args(None, Some(body), None, None);
+
+        let resp = server.wiki_ingest(Parameters(args)).await;
+        let v = parse(&resp);
+
+        assert_eq!(v["status"], "ok", "expected ok, got: {resp}");
+        let raw_path = v["raw_path"].as_str().unwrap();
+        assert_eq!(
+            std::path::Path::new(raw_path),
+            tmp.path().join("raw/articles/transformer-basics.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_with_content_explicit_filename_wins() {
+        let (tmp, server) = spawn_server();
+        let body = "# Whatever\n\nBody.";
+        let args = ingest_args(None, Some(body), Some("custom.md"), Some("ignored title"));
+
+        let resp = server.wiki_ingest(Parameters(args)).await;
+        let v = parse(&resp);
+
+        assert_eq!(v["status"], "ok", "expected ok, got: {resp}");
+        assert_eq!(
+            std::path::Path::new(v["raw_path"].as_str().unwrap()),
+            tmp.path().join("raw/articles/custom.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_without_source_or_content_returns_error() {
+        let (_tmp, server) = spawn_server();
+        let args = ingest_args(None, None, None, None);
+
+        let resp = server.wiki_ingest(Parameters(args)).await;
+        let v = parse(&resp);
+
+        assert!(
+            v.get("error").is_some(),
+            "expected error field, got: {resp}"
+        );
+        let msg = v["error"].as_str().unwrap();
+        assert!(
+            msg.contains("source_path") || msg.contains("content"),
+            "error should mention source_path/content: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_rejects_both_source_path_and_content() {
+        let (tmp, server) = spawn_server();
+        // Stage a real file so the "source not found" error doesn't shadow
+        // the mutual-exclusion check.
+        let staged = tmp.path().join("staged.md");
+        std::fs::write(&staged, "stub").unwrap();
+        let args = ingest_args(
+            Some(staged.to_str().unwrap()),
+            Some("pasted body"),
+            None,
+            None,
+        );
+
+        let resp = server.wiki_ingest(Parameters(args)).await;
+        let v = parse(&resp);
+
+        assert!(v.get("error").is_some(), "expected error, got: {resp}");
+        let msg = v["error"].as_str().unwrap();
+        assert!(
+            msg.to_lowercase().contains("both")
+                || msg.contains("either")
+                || msg.contains("exclusive"),
+            "error should name the conflict: {msg}"
+        );
+    }
 }
