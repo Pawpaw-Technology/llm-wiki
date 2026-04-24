@@ -168,6 +168,23 @@ impl TantivySearcher {
         op(guard.as_mut().expect("writer opened above"))
     }
 
+    fn check_writer_available(&self) -> Result<()> {
+        let guard = self
+            .writer
+            .lock()
+            .map_err(|e| WikiError::Internal(e.to_string()))?;
+        if guard.is_some() {
+            return Ok(());
+        }
+        match self.index.writer::<TantivyDocument>(50_000_000) {
+            Ok(_writer) => Ok(()),
+            Err(tantivy::TantivyError::LockFailure(..)) => Err(WikiError::IndexLocked {
+                path: self.index_dir.clone(),
+            }),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn rollback_writer(&self) -> Result<()> {
         let mut guard = self
             .writer
@@ -319,6 +336,8 @@ impl Searcher for TantivySearcher {
 
     #[tracing::instrument(skip(self))]
     fn rebuild(&self, wiki_dir: &Path) -> Result<()> {
+        self.check_writer_available()?;
+
         let mut docs = Vec::new();
         let pages = crate::fs::list_pages(wiki_dir)?;
         for rel_path in &pages {

@@ -325,6 +325,25 @@ fn rebuild_returns_index_locked_when_writer_held_elsewhere() {
 }
 
 #[test]
+fn rebuild_checks_writer_lock_before_scanning_pages() {
+    let tmp = TempDir::new().unwrap();
+
+    let searcher_a = TantivySearcher::new(tmp.path()).unwrap();
+    let (path, page) = make_page("A", &[], "body");
+    searcher_a.index_page(&path, &page).unwrap();
+    searcher_a.commit().unwrap();
+
+    let searcher_b = TantivySearcher::new(tmp.path()).unwrap();
+    let err = searcher_b
+        .rebuild(&tmp.path().join("missing-wiki"))
+        .expect_err("writer lock should be checked before wiki scanning");
+    assert!(
+        matches!(err, WikiError::IndexLocked { .. }),
+        "expected IndexLocked before any page scan error, got {err:?}"
+    );
+}
+
+#[test]
 fn failed_rebuild_preserves_last_committed_index() {
     let tmp = TempDir::new().unwrap();
     let index_dir = tmp.path().join("index");
