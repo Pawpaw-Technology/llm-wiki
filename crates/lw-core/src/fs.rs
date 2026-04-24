@@ -52,9 +52,14 @@ fn walk_md(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
             walk_md(base, &path, out)?;
-        } else if path.extension().is_some_and(|ext| ext == "md")
+        } else if file_type.is_file()
+            && path.extension().is_some_and(|ext| ext == "md")
             && let Ok(rel) = path.strip_prefix(base)
         {
             out.push(rel.to_path_buf());
