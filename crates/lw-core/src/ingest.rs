@@ -91,6 +91,8 @@ pub async fn ingest_source(
     source: &Path,
     raw_subdir: &str,
 ) -> Result<IngestResult> {
+    ensure_single_component("raw_subdir", raw_subdir)?;
+
     // Copy source to raw/
     let filename = source.file_name().ok_or_else(|| {
         crate::WikiError::Io(std::io::Error::new(

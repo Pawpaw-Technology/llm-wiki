@@ -324,6 +324,131 @@ fn rebuild_returns_index_locked_when_writer_held_elsewhere() {
     );
 }
 
+#[test]
+fn rebuild_checks_writer_lock_before_scanning_pages() {
+    let tmp = TempDir::new().unwrap();
+
+    let searcher_a = TantivySearcher::new(tmp.path()).unwrap();
+    let (path, page) = make_page("A", &[], "body");
+    searcher_a.index_page(&path, &page).unwrap();
+    searcher_a.commit().unwrap();
+
+    let searcher_b = TantivySearcher::new(tmp.path()).unwrap();
+    let err = searcher_b
+        .rebuild(&tmp.path().join("missing-wiki"))
+        .expect_err("writer lock should be checked before wiki scanning");
+    assert!(
+        matches!(err, WikiError::IndexLocked { .. }),
+        "expected IndexLocked before any page scan error, got {err:?}"
+    );
+}
+
+#[test]
+fn failed_rebuild_preserves_last_committed_index() {
+    let tmp = TempDir::new().unwrap();
+    let index_dir = tmp.path().join("index");
+    std::fs::create_dir_all(&index_dir).unwrap();
+    let searcher = TantivySearcher::new(&index_dir).unwrap();
+    let (path, page) = make_page("Survives", &[], "durable body");
+    searcher.index_page(&path, &page).unwrap();
+    searcher.commit().unwrap();
+
+    let query = SearchQuery {
+        text: Some("durable".into()),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    assert_eq!(searcher.search(&query).unwrap().total, 1);
+
+    searcher
+        .rebuild(&tmp.path().join("missing-wiki"))
+        .expect_err("rebuild should fail when the wiki directory cannot be listed");
+
+    assert_eq!(
+        searcher.search(&query).unwrap().total,
+        1,
+        "failed rebuild must not publish an empty index"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn rebuild_rolls_back_writer_after_commit_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    struct PermissionsGuard {
+        path: std::path::PathBuf,
+        mode: u32,
+    }
+
+    impl Drop for PermissionsGuard {
+        fn drop(&mut self) {
+            let _ =
+                std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
+        }
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let index_dir = tmp.path().join("index");
+    std::fs::create_dir_all(&index_dir).unwrap();
+    let searcher = TantivySearcher::new(&index_dir).unwrap();
+    let (path, page) = make_page("Original", &[], "original durable body");
+    searcher.index_page(&path, &page).unwrap();
+    searcher.commit().unwrap();
+
+    let wiki_dir = tmp.path().join("wiki");
+    std::fs::create_dir_all(wiki_dir.join("architecture")).unwrap();
+    let (_, replacement) = make_page("Replacement", &[], "replacement body");
+    std::fs::write(
+        wiki_dir.join("architecture/replacement.md"),
+        replacement.to_markdown(),
+    )
+    .unwrap();
+
+    let original_query = SearchQuery {
+        text: Some("durable".into()),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    let replacement_query = SearchQuery {
+        text: Some("replacement".into()),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    assert_eq!(searcher.search(&original_query).unwrap().total, 1);
+    assert_eq!(searcher.search(&replacement_query).unwrap().total, 0);
+
+    let original_mode = std::fs::metadata(&index_dir).unwrap().permissions().mode();
+    let guard = PermissionsGuard {
+        path: index_dir.clone(),
+        mode: original_mode,
+    };
+    std::fs::set_permissions(&index_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    searcher
+        .rebuild(&wiki_dir)
+        .expect_err("rebuild commit should fail while index dir is read-only");
+
+    drop(guard);
+
+    searcher
+        .commit()
+        .expect("rollback should leave no failed rebuild operations pending");
+    assert_eq!(
+        searcher.search(&original_query).unwrap().total,
+        1,
+        "the previously committed index should remain searchable"
+    );
+    assert_eq!(
+        searcher.search(&replacement_query).unwrap().total,
+        0,
+        "a later commit must not publish the aborted rebuild"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // is_empty — gates any work that would open the writer lock on a fresh
 // index (e.g. `lw serve` startup rebuild).

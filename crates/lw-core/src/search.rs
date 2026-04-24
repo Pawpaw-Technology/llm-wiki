@@ -132,6 +132,19 @@ impl TantivySearcher {
         crate::fs::category_from_path(std::path::Path::new(rel_path)).unwrap_or_default()
     }
 
+    fn page_document(&self, rel_path: &str, page: &Page) -> TantivyDocument {
+        let category = Self::category_from_path(rel_path);
+        let mut doc = TantivyDocument::new();
+        doc.add_text(self.f_path, rel_path);
+        doc.add_text(self.f_title, &page.title);
+        doc.add_text(self.f_body, &page.body);
+        for tag in &page.tags {
+            doc.add_text(self.f_tags, tag);
+        }
+        doc.add_text(self.f_category, &category);
+        doc
+    }
+
     /// Run `op` with the lazily-opened writer. Translates tantivy's
     /// `LockFailure` into the typed `WikiError::IndexLocked` so callers
     /// (e.g. CLI query) can fall back to read-only mode instead of
@@ -154,35 +167,46 @@ impl TantivySearcher {
         }
         op(guard.as_mut().expect("writer opened above"))
     }
+
+    fn check_writer_available(&self) -> Result<()> {
+        let guard = self
+            .writer
+            .lock()
+            .map_err(|e| WikiError::Internal(e.to_string()))?;
+        if guard.is_some() {
+            return Ok(());
+        }
+        match self.index.writer::<TantivyDocument>(50_000_000) {
+            Ok(_writer) => Ok(()),
+            Err(tantivy::TantivyError::LockFailure(..)) => Err(WikiError::IndexLocked {
+                path: self.index_dir.clone(),
+            }),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn rollback_writer(&self) -> Result<()> {
+        let mut guard = self
+            .writer
+            .lock()
+            .map_err(|e| WikiError::Internal(e.to_string()))?;
+        if let Some(writer) = guard.as_mut() {
+            writer.rollback()?;
+        }
+        Ok(())
+    }
 }
 
 impl Searcher for TantivySearcher {
     #[tracing::instrument(skip(self, page))]
     fn index_page(&self, rel_path: &str, page: &Page) -> Result<()> {
         let f_path = self.f_path;
-        let f_title = self.f_title;
-        let f_body = self.f_body;
-        let f_tags = self.f_tags;
-        let f_category = self.f_category;
-        let category = Self::category_from_path(rel_path);
         let rel_path = rel_path.to_string();
-        let page_title = page.title.clone();
-        let page_body = page.body.clone();
-        let page_tags = page.tags.clone();
+        let doc = self.page_document(&rel_path, page);
 
         self.with_writer(|writer| {
             let path_term = Term::from_field_text(f_path, &rel_path);
             writer.delete_term(path_term);
-
-            let mut doc = TantivyDocument::new();
-            doc.add_text(f_path, &rel_path);
-            doc.add_text(f_title, &page_title);
-            doc.add_text(f_body, &page_body);
-            for tag in &page_tags {
-                doc.add_text(f_tags, tag);
-            }
-            doc.add_text(f_category, &category);
-
             writer.add_document(doc)?;
             Ok(())
         })
@@ -312,24 +336,39 @@ impl Searcher for TantivySearcher {
 
     #[tracing::instrument(skip(self))]
     fn rebuild(&self, wiki_dir: &Path) -> Result<()> {
-        self.with_writer(|writer| {
-            writer.delete_all_documents()?;
-            Ok(())
-        })?;
-        self.commit()?;
+        self.check_writer_available()?;
 
+        let mut docs = Vec::new();
         let pages = crate::fs::list_pages(wiki_dir)?;
         for rel_path in &pages {
             let abs_path = wiki_dir.join(rel_path);
             match crate::fs::read_page(&abs_path) {
                 Ok(page) => {
-                    let rel_str = rel_path.to_string_lossy();
-                    self.index_page(&rel_str, &page)?;
+                    let rel_path = rel_path.to_string_lossy();
+                    docs.push(self.page_document(&rel_path, &page));
                 }
                 Err(_) => continue, // skip unparseable files
             }
         }
-        self.commit()
+
+        let rebuild_result = self.with_writer(|writer| {
+            writer.delete_all_documents()?;
+            for doc in docs {
+                writer.add_document(doc)?;
+            }
+            Ok(())
+        });
+        if let Err(err) = rebuild_result {
+            let _ = self.rollback_writer();
+            return Err(err);
+        }
+        match self.commit() {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let _ = self.rollback_writer();
+                Err(err)
+            }
+        }
     }
 }
 
