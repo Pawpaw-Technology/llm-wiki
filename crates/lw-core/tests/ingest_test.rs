@@ -114,7 +114,10 @@ async fn ingest_source_rejects_raw_subdir_with_separator() {
         .await
         .expect_err("path traversal in raw_subdir should be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("raw_subdir") || msg.contains("path"));
+    assert!(
+        msg.contains("invalid raw_subdir") && msg.contains("single path component"),
+        "expected specific raw_subdir validation error, got: {msg}"
+    );
     assert!(!root.join("escaped/paper.md").exists());
 }
 
