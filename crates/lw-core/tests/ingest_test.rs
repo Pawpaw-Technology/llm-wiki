@@ -101,6 +101,24 @@ async fn ingest_content_rejects_raw_subdir_with_separator() {
 }
 
 #[tokio::test]
+async fn ingest_source_rejects_raw_subdir_with_separator() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_wiki(root, &WikiSchema::default()).unwrap();
+
+    let source = tmp.path().join("external/paper.md");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "# My Paper\n\nContent here.").unwrap();
+
+    let err = ingest_source(root, &source, "../escaped")
+        .await
+        .expect_err("path traversal in raw_subdir should be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("raw_subdir") || msg.contains("path"));
+    assert!(!root.join("escaped/paper.md").exists());
+}
+
+#[tokio::test]
 async fn ingest_does_not_create_wiki_page() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();

@@ -324,6 +324,35 @@ fn rebuild_returns_index_locked_when_writer_held_elsewhere() {
     );
 }
 
+#[test]
+fn failed_rebuild_preserves_last_committed_index() {
+    let tmp = TempDir::new().unwrap();
+    let index_dir = tmp.path().join("index");
+    std::fs::create_dir_all(&index_dir).unwrap();
+    let searcher = TantivySearcher::new(&index_dir).unwrap();
+    let (path, page) = make_page("Survives", &[], "durable body");
+    searcher.index_page(&path, &page).unwrap();
+    searcher.commit().unwrap();
+
+    let query = SearchQuery {
+        text: Some("durable".into()),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    assert_eq!(searcher.search(&query).unwrap().total, 1);
+
+    searcher
+        .rebuild(&tmp.path().join("missing-wiki"))
+        .expect_err("rebuild should fail when the wiki directory cannot be listed");
+
+    assert_eq!(
+        searcher.search(&query).unwrap().total,
+        1,
+        "failed rebuild must not publish an empty index"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // is_empty — gates any work that would open the writer lock on a fresh
 // index (e.g. `lw serve` startup rebuild).
