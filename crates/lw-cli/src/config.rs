@@ -55,10 +55,21 @@ impl Config {
         tmp.as_file().sync_all()?;
         tmp.persist(path).map_err(|e| e.error)?;
 
-        let dir = fs::File::open(parent)?;
-        dir.sync_all()?;
+        sync_parent_dir(parent)?;
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(parent: &Path) -> anyhow::Result<()> {
+    let dir = fs::File::open(parent)?;
+    dir.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_parent: &Path) -> anyhow::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]

@@ -75,3 +75,29 @@ fn find_broken_links_detects_missing() {
     let broken = find_broken_links(body, &wiki_dir);
     assert_eq!(broken, vec!["nonexistent"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn find_broken_links_treats_symlinked_targets_as_missing() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let wiki_dir = tmp.path().join("wiki");
+    std::fs::create_dir_all(wiki_dir.join("architecture")).unwrap();
+
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(outside.join("category")).unwrap();
+    std::fs::write(outside.join("secret-file.md"), "x").unwrap();
+    std::fs::write(outside.join("category/secret-dir.md"), "x").unwrap();
+
+    symlink(
+        outside.join("secret-file.md"),
+        wiki_dir.join("architecture/secret-file.md"),
+    )
+    .unwrap();
+    symlink(outside.join("category"), wiki_dir.join("leaked")).unwrap();
+
+    let broken = find_broken_links("See [[secret-file]] and [[secret-dir]].", &wiki_dir);
+
+    assert_eq!(broken, vec!["secret-file", "secret-dir"]);
+}
