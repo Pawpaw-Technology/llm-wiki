@@ -25,13 +25,20 @@ pub fn resolve_link(target: &str, wiki_dir: &Path) -> Option<PathBuf> {
     let filename = format!("{}.md", target);
     let entries = std::fs::read_dir(wiki_dir).ok()?;
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() || !file_type.is_dir() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
-            let candidate = path.join(&filename);
-            if candidate.exists() {
-                let cat = path.file_name()?;
-                return Some(PathBuf::from(cat).join(&filename));
-            }
+        let candidate = path.join(&filename);
+        if candidate
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_file())
+        {
+            let cat = path.file_name()?;
+            return Some(PathBuf::from(cat).join(&filename));
         }
     }
     None

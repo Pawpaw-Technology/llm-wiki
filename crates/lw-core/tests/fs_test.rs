@@ -75,6 +75,52 @@ fn list_pages_finds_markdown() {
     assert_eq!(pages.len(), 2);
 }
 
+#[cfg(unix)]
+#[test]
+fn list_pages_ignores_symlinked_files_and_directories() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_wiki(root, &WikiSchema::default()).unwrap();
+
+    let wiki_dir = root.join("wiki");
+    let real_page = wiki_dir.join("architecture/real.md");
+    std::fs::write(&real_page, "---\ntitle: Real\n---\n\ninside\n").unwrap();
+
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(
+        outside.join("secret.md"),
+        "---\ntitle: Secret\n---\n\noutside\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(outside.join("collection")).unwrap();
+    std::fs::write(
+        outside.join("collection/nested.md"),
+        "---\ntitle: Nested\n---\n\noutside\n",
+    )
+    .unwrap();
+
+    symlink(
+        outside.join("secret.md"),
+        wiki_dir.join("architecture/secret.md"),
+    )
+    .unwrap();
+    symlink(
+        outside.join("collection"),
+        wiki_dir.join("architecture/collection"),
+    )
+    .unwrap();
+
+    let pages = list_pages(&wiki_dir).unwrap();
+
+    assert_eq!(
+        pages,
+        vec![std::path::PathBuf::from("architecture/real.md")]
+    );
+}
+
 #[test]
 fn read_nonexistent_page_errors() {
     let result = read_page(Path::new("/nonexistent/page.md"));
