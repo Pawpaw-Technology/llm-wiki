@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -41,18 +41,22 @@ impl Config {
         }
     }
 
-    /// Atomic write: stage to .tmp sibling, fsync, rename.
+    /// Atomic write: stage to a unique temp file in the target dir, fsync, rename.
     pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let tmp = path.with_extension("toml.tmp");
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+
         let body = toml::to_string_pretty(self)?;
-        fs::write(&tmp, body)?;
-        // fsync the file so rename is durable
-        let f = fs::File::open(&tmp)?;
-        f.sync_all()?;
-        fs::rename(&tmp, path)?;
+        let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+        tmp.write_all(body.as_bytes())?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(path).map_err(|e| e.error)?;
+
+        let dir = fs::File::open(parent)?;
+        dir.sync_all()?;
         Ok(())
     }
 }
@@ -151,5 +155,30 @@ mod io_tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(entries, vec!["config.toml".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_does_not_follow_preexisting_tmp_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let victim = dir.path().join("victim.txt");
+        fs::write(&victim, "do not overwrite").unwrap();
+        symlink(&victim, path.with_extension("toml.tmp")).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.workspace.current = Some("safe".into());
+        cfg.save_to(&path).unwrap();
+
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "do not overwrite");
+        assert!(
+            !fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(Config::load_from(&path).unwrap(), cfg);
     }
 }
