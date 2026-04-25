@@ -1161,4 +1161,138 @@ mod tests {
             "warning must mention the other dirty file; got: {w}"
         );
     }
+
+    // ─── Issue #97: .lw/ ephemeral paths must not contribute to dirty-warning ──
+    //
+    // `.lw/search/*` (Tantivy index) and `.lw/backlinks/.built` (sentinel) are
+    // regenerable artifacts of the wiki tooling itself, not user content.  The
+    // dirty-elsewhere warning must silently skip them regardless of git-ignore
+    // state — this covers existing vaults that may already have these tracked.
+
+    #[test]
+    fn dirty_warning_ignores_lw_search_files() {
+        // Set up a repo where `.lw/search/segment.idx` appears as untracked
+        // alongside the wiki page being committed. The warning must be None
+        // because the ONLY other dirty entry is an ephemeral .lw/search/ file.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+
+        // Seed a baseline commit so HEAD exists.
+        fs::write(root.join("README.md"), "x").unwrap();
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+
+        // Simulate the Tantivy index artifacts under .lw/search/
+        fs::create_dir_all(root.join(".lw/search")).unwrap();
+        fs::write(root.join(".lw/search/segment.idx"), "tantivy").unwrap();
+        fs::write(root.join(".lw/search/meta.json"), "{}").unwrap();
+
+        // Also create the wiki page being committed.
+        fs::create_dir_all(root.join("wiki/tools")).unwrap();
+        fs::write(root.join("wiki/tools/bar.md"), "page").unwrap();
+
+        let warning =
+            dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/bar.md")]);
+        assert!(
+            warning.is_none(),
+            ".lw/search/* must not trigger dirty-warning; got: {warning:?}"
+        );
+    }
+
+    #[test]
+    fn dirty_warning_ignores_lw_backlinks_built_sentinel() {
+        // `.lw/backlinks/.built` is the sentinel for the backlink index.
+        // It must be silently ignored in the dirty-warning.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+
+        fs::write(root.join("README.md"), "x").unwrap();
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+
+        // Simulate the backlinks built sentinel.
+        fs::create_dir_all(root.join(".lw/backlinks")).unwrap();
+        fs::write(root.join(".lw/backlinks/.built"), "").unwrap();
+
+        // Wiki page being committed.
+        fs::create_dir_all(root.join("wiki/tools")).unwrap();
+        fs::write(root.join("wiki/tools/baz.md"), "page").unwrap();
+
+        let warning =
+            dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/baz.md")]);
+        assert!(
+            warning.is_none(),
+            ".lw/backlinks/.built must not trigger dirty-warning; got: {warning:?}"
+        );
+    }
+
+    #[test]
+    fn dirty_warning_fires_for_non_lw_dirty_file_positive_control() {
+        // Positive control: even when .lw/ ephemeral paths are present, an
+        // unrelated dirty file outside .lw/ must STILL trigger the warning.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+
+        fs::write(root.join("README.md"), "x").unwrap();
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+
+        // Ephemeral .lw/ paths — these must be ignored.
+        fs::create_dir_all(root.join(".lw/search")).unwrap();
+        fs::write(root.join(".lw/search/segment.idx"), "tantivy").unwrap();
+        fs::create_dir_all(root.join(".lw/backlinks")).unwrap();
+        fs::write(root.join(".lw/backlinks/.built"), "").unwrap();
+
+        // The unrelated dirty file that SHOULD trigger the warning.
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        fs::write(root.join("wiki/other-page.md"), "draft").unwrap();
+
+        // Wiki page being committed.
+        fs::create_dir_all(root.join("wiki/tools")).unwrap();
+        fs::write(root.join("wiki/tools/qux.md"), "page").unwrap();
+
+        let warning =
+            dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/qux.md")]);
+        let w = warning.expect("warning expected for wiki/other-page.md");
+        assert!(
+            w.contains("other-page.md"),
+            "warning must mention the non-.lw dirty file; got: {w}"
+        );
+        // The ephemeral .lw/ paths must NOT appear in the warning.
+        assert!(
+            !w.contains(".lw/search"),
+            "warning must NOT mention .lw/search; got: {w}"
+        );
+        assert!(
+            !w.contains(".built"),
+            "warning must NOT mention .lw/backlinks/.built; got: {w}"
+        );
+    }
 }
