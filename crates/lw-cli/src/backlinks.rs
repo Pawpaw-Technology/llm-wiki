@@ -95,8 +95,17 @@ pub fn run(root: &Path, target: &str, format: &Format) -> Result<()> {
 
 /// Wire `update_for_page` after a successful CLI write, so the backlink index
 /// stays up to date when the CLI modifies a page directly.
-pub fn update_after_write(root: &Path, rel_path: &Path) {
-    if let Err(e) = backlinks::update_for_page(root, rel_path) {
-        tracing::warn!("backlink update failed for {}: {e}", rel_path.display());
+///
+/// Returns the absolute paths of sidecar files written (created or updated) by
+/// the incremental update. The caller should pass these alongside the page path
+/// to `run_auto_commit` so the sidecars land in the same commit (Option A,
+/// issue #97). Returns an empty Vec on failure (already logged as a warning).
+pub fn update_after_write(root: &Path, rel_path: &Path) -> Vec<std::path::PathBuf> {
+    match backlinks::update_for_page(root, rel_path) {
+        Ok(written) => written,
+        Err(e) => {
+            tracing::warn!("backlink update failed for {}: {e}", rel_path.display());
+            vec![]
+        }
     }
 }

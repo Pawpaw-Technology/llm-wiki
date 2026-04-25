@@ -254,7 +254,13 @@ pub fn ensure_index(wiki_root: &Path) -> Result<()> {
 /// 2. For every target whose sidecar may be affected by this source, reload the
 ///    sidecar, remove the old source entry, and either write the updated sidecar
 ///    or delete the file if no sources remain.
-pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<()> {
+///
+/// Returns the list of sidecar paths that were written (created or updated).
+/// Deleted sidecars are NOT included — callers should only commit files that exist
+/// on disk. The caller (CLI/MCP auto-commit, Option A per issue #97) should
+/// include these paths in the same commit as the page so the link-evolution audit
+/// trail is preserved in `git log` / `git blame`.
+pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<Vec<PathBuf>> {
     let abs_path = wiki_root.join("wiki").join(source_rel);
     let source_path_str = format!("wiki/{}", source_rel.to_string_lossy().replace('\\', "/"));
 
@@ -262,7 +268,7 @@ pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<()> {
     let new_slugs: Vec<String> = if abs_path.exists() {
         let page = match read_page(&abs_path) {
             Ok(p) => p,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(vec![]),
         };
         let mut slugs: Vec<String> = extract_link_lines(&page.body)
             .into_iter()
@@ -333,6 +339,10 @@ pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<()> {
         None
     };
 
+    // Collect paths of sidecar files written (created or updated) so callers
+    // can include them in the same auto-commit as the page (Option A, issue #97).
+    let mut written_sidecars: Vec<PathBuf> = Vec::new();
+
     for slug in all_slugs {
         let sidecar = sidecar_path(wiki_root, &slug);
 
@@ -387,6 +397,8 @@ pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<()> {
                 std::fs::remove_file(&sidecar)
                     .map_err(|e| crate::WikiError::Io(std::io::Error::other(e.to_string())))?;
             }
+            // Deleted sidecars are not added to written_sidecars — can't commit a
+            // file that no longer exists. Stale-sidecar GC is out of scope (#97).
         } else {
             let record = BacklinkRecord {
                 target: slug,
@@ -395,10 +407,11 @@ pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<()> {
             let json = serde_json::to_vec_pretty(&record)
                 .map_err(|e| crate::WikiError::Io(std::io::Error::other(e.to_string())))?;
             atomic_write(&sidecar, &json)?;
+            written_sidecars.push(sidecar);
         }
     }
 
-    Ok(())
+    Ok(written_sidecars)
 }
 
 /// Query the backlink index for a given target slug.
