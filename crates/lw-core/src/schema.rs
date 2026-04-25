@@ -16,8 +16,7 @@ pub struct CategoryConfig {
 pub struct WikiSchema {
     pub wiki: WikiConfig,
     pub tags: TagsConfig,
-    /// Stub: always empty — not loaded from TOML until GREEN commit.
-    #[serde(skip)]
+    #[serde(default)]
     pub categories: HashMap<String, CategoryConfig>,
 }
 
@@ -58,9 +57,8 @@ impl WikiSchema {
     }
 
     /// Return the [`CategoryConfig`] for a named category, or `None` if not configured.
-    /// Stub: always returns `None` until GREEN commit.
-    pub fn category_config(&self, _name: &str) -> Option<&CategoryConfig> {
-        None
+    pub fn category_config(&self, name: &str) -> Option<&CategoryConfig> {
+        self.categories.get(name)
     }
 }
 
