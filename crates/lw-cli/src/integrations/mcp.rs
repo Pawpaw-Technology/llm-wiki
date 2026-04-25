@@ -168,6 +168,55 @@ pub fn remove_entry(config: &mut Value, key_path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Result of an ownership-checked removal attempt.
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+pub enum RemoveOutcome {
+    /// Entry was present, matched the managed shape, and has been removed.
+    Removed,
+    /// Entry was present but appears user-edited; left untouched.
+    PreservedUserEdited { existing: Value },
+    /// Entry was not present at `key_path`; nothing to do.
+    NotPresent,
+}
+
+/// Remove a managed entry only if its current shape matches `canonical`.
+///
+/// Ownership is determined by `managed_fields_match`: the existing entry must
+/// agree with `canonical` on every field except `_lw_version`. If the entry
+/// has extra fields or a different `command`/`args`, it is considered
+/// user-edited and left untouched.
+///
+/// * `Removed` — entry matched; caller should persist `config`.
+/// * `PreservedUserEdited` — entry exists but was user-modified; caller should warn.
+/// * `NotPresent` — key_path resolved to nothing; caller should report no-op.
+#[allow(dead_code)]
+pub fn remove_if_managed(config: &mut Value, key_path: &str, canonical: &Value) -> RemoveOutcome {
+    let parts: Vec<&str> = key_path.split('.').collect();
+    let (last, parents) = parts.split_last().unwrap();
+
+    // Navigate to the parent object, following existing structure (read-only).
+    let mut cursor: &Value = config;
+    for p in parents {
+        match cursor.get(*p) {
+            Some(child) => cursor = child,
+            None => return RemoveOutcome::NotPresent,
+        }
+    }
+    let existing = match cursor.as_object().and_then(|o| o.get(*last)) {
+        Some(v) => v.clone(),
+        None => return RemoveOutcome::NotPresent,
+    };
+
+    if managed_fields_match(&existing, canonical) {
+        // Ownership confirmed — now remove via mutable traversal.
+        remove_entry(config, key_path);
+        RemoveOutcome::Removed
+    } else {
+        RemoveOutcome::PreservedUserEdited { existing }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

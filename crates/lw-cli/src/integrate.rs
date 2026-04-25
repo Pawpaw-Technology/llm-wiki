@@ -1,8 +1,8 @@
 use crate::integrations::{
-    descriptor::{Descriptor, McpFormat, expand_tilde},
+    descriptor::{expand_tilde, Descriptor, McpFormat},
     integrations_root, load_all, mcp, skills,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::io::IsTerminal;
 
 pub struct IntegrateOpts {
@@ -142,16 +142,32 @@ fn uninstall_one(id: &str, desc: &Descriptor) -> anyhow::Result<()> {
         if path.exists() {
             let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)
                 .map_err(|e| anyhow::anyhow!("parse {}: {e}", path.display()))?;
-            let removed = mcp::remove_entry(&mut config, &mcp_cfg.key_path);
-            if removed {
-                let body = serde_json::to_string_pretty(&config)? + "\n";
-                let backup = mcp::atomic_write_with_backup(&path, &body)?;
-                println!("  MCP entry removed from {}", path.display());
-                if let Some(b) = backup {
-                    println!("  backup: {}", b.display());
+            // Build the canonical entry that `lw integrate` would have written,
+            // so we can verify ownership before deleting.
+            let canonical = json!({
+                "command": mcp_cfg.command,
+                "args": mcp_cfg.args,
+                mcp::VERSION_MARKER: VERSION,
+            });
+            match mcp::remove_if_managed(&mut config, &mcp_cfg.key_path, &canonical) {
+                mcp::RemoveOutcome::Removed => {
+                    let body = serde_json::to_string_pretty(&config)? + "\n";
+                    let backup = mcp::atomic_write_with_backup(&path, &body)?;
+                    println!("  MCP entry removed from {}", path.display());
+                    if let Some(b) = backup {
+                        println!("  backup: {}", b.display());
+                    }
                 }
-            } else {
-                println!("  MCP entry not present at {}", path.display());
+                mcp::RemoveOutcome::PreservedUserEdited { .. } => {
+                    eprintln!(
+                        "  MCP entry at {} appears user-edited; leaving untouched. \
+                         Remove manually if desired.",
+                        mcp_cfg.key_path
+                    );
+                }
+                mcp::RemoveOutcome::NotPresent => {
+                    println!("  MCP entry not present at {}", path.display());
+                }
             }
         }
     }
