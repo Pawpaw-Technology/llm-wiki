@@ -273,13 +273,24 @@ pub fn new_page(
         }
     }
 
-    // Step 5: compute target path; refuse to overwrite
+    // Step 5: compute target path; refuse to overwrite.
+    //
+    // Surface the error with a VAULT-RELATIVE path (issue #87) — the Display
+    // string flows out through CLI stderr (#60) and MCP error JSON (#61),
+    // and agents that feed the path back into wiki_read/wiki_write expect
+    // vault-relative input. strip_prefix should always succeed here since
+    // `target` was just built from `wiki_root.join(...)`; the fallback is
+    // defensive in case a future caller passes a non-canonical wiki_root.
     let target = wiki_root
         .join("wiki")
         .join(category)
         .join(format!("{}.md", req.slug));
     if target.exists() {
-        return Err(WikiError::PageAlreadyExists { path: target });
+        let rel = target
+            .strip_prefix(wiki_root)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|_| target.clone());
+        return Err(WikiError::PageAlreadyExists { path: rel });
     }
 
     // Step 6: build Page
