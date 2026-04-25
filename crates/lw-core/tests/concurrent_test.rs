@@ -11,8 +11,8 @@ use lw_core::fs::{list_pages, read_page};
 use lw_core::link::{find_broken_links, resolve_link};
 use lw_core::search::{SearchQuery, Searcher};
 use lw_core::tag::Taxonomy;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 /// N independent wikis running full CRUD in parallel threads.
