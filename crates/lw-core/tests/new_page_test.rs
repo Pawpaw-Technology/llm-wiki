@@ -1,5 +1,3 @@
-use lw_core::fs::{init_wiki, new_page, read_page, NewPageRequest};
-use lw_core::schema::{CategoryConfig, WikiSchema};
 /// Tests for `lw_core::fs::new_page` (issue #59)
 ///
 /// These tests cover all acceptance criteria from the spec:
@@ -12,7 +10,8 @@ use lw_core::schema::{CategoryConfig, WikiSchema};
 ///   7. Category without `[categories.<name>]` block uses empty template (no crash)
 ///   8. Display strings for all four new error variants match canonical spec wording
 use lw_core::WikiError;
-use std::collections::HashMap;
+use lw_core::fs::{NewPageRequest, init_wiki, new_page, read_page};
+use lw_core::schema::{CategoryConfig, WikiSchema};
 use tempfile::TempDir;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -424,8 +423,3 @@ fn no_author_is_accepted() {
     assert!(path.exists());
     assert_eq!(page.author, None);
 }
-
-// ── Unused import suppression ─────────────────────────────────────────────────
-// HashMap is used only to construct schemas inside helpers; keep lint quiet.
-#[allow(unused_imports)]
-use std::collections::HashMap as _HashMap;
