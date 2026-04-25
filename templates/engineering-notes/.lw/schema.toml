@@ -4,3 +4,59 @@ default_review_days = 90
 
 [tags]
 categories = ["systems", "tools", "patterns", "incidents"]
+
+[categories.systems]
+review_days = 180
+required_fields = ["title", "tags"]
+template = """
+## Overview
+
+## Architecture
+
+## Operating Notes
+
+## Failure Modes
+
+## See Also
+"""
+
+[categories.tools]
+review_days = 90
+required_fields = ["title", "tags"]
+template = """
+## Overview
+
+## Usage
+
+## Gotchas
+
+## See Also
+"""
+
+[categories.patterns]
+review_days = 365
+required_fields = ["title", "tags"]
+template = """
+## Problem
+
+## Pattern
+
+## Tradeoffs
+
+## Examples
+"""
+
+[categories.incidents]
+review_days = 365
+required_fields = ["title", "tags"]
+template = """
+## Summary
+
+## Timeline
+
+## Root Cause
+
+## Mitigation
+
+## Follow-ups
+"""

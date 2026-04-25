@@ -4,3 +4,36 @@ default_review_days = 90
 
 [tags]
 categories = ["notes", "links", "people"]
+
+[categories.notes]
+review_days = 180
+required_fields = ["title", "tags"]
+template = """
+## Context
+
+## Notes
+
+## Open Questions
+"""
+
+[categories.links]
+review_days = 365
+required_fields = ["title", "tags"]
+template = """
+## Source
+
+## Why It Matters
+
+## Highlights
+"""
+
+[categories.people]
+review_days = 365
+required_fields = ["title", "tags"]
+template = """
+## Background
+
+## Interactions
+
+## Notes
+"""
