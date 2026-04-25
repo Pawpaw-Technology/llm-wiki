@@ -101,7 +101,8 @@ enum Commands {
         stdin: bool,
         /// Inline content to ingest (alternative to a file path or --stdin).
         /// Accepts values that start with `-` (e.g. markdown list items).
-        #[arg(long, allow_hyphen_values = true)]
+        /// Cannot be combined with --stdin (mutually exclusive).
+        #[arg(long, allow_hyphen_values = true, conflicts_with = "stdin")]
         content: Option<String>,
         /// Page title (auto-derived from filename if omitted)
         #[arg(long)]

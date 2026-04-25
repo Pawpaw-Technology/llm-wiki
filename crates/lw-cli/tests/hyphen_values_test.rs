@@ -169,6 +169,8 @@ fn write_content_leading_dash_equals_form() {
 /// Regression #96: `lw ingest --content "# Heading\n- bullet"` (space form)
 /// must not be rejected by clap. Before the fix --content didn't exist on
 /// ingest at all, so the test also documents the new --content flag.
+///
+/// Also verifies the content actually lands on disk in `raw/articles/<slug>.md`.
 #[test]
 fn ingest_content_space_form_with_markdown() {
     let tmp = setup_wiki_in_git_repo();
@@ -192,12 +194,34 @@ fn ingest_content_space_form_with_markdown() {
     ])
     .assert()
     .success();
+
+    // Read back the produced raw file and verify the heading landed on disk.
+    // `lw ingest` writes raw files to `raw/<raw-type>/<slug>.md`.
+    // slug_from_title_or_h1("Inline Article", ...) → slugify("Inline Article") → "inline-article"
+    let raw_path = root.join("raw/articles/inline-article.md");
+    let contents = std::fs::read_to_string(&raw_path).unwrap_or_else(|e| {
+        panic!(
+            "raw file not found at {}: {e}\n(ingest --content did not write the file)",
+            raw_path.display()
+        )
+    });
+    assert!(
+        contents.contains("# Inline Article"),
+        "raw file should contain '# Inline Article', got:\n{contents}"
+    );
+    assert!(
+        contents.contains("- bullet point"),
+        "raw file should contain '- bullet point', got:\n{contents}"
+    );
 }
 
 // ─── lw ingest --content: equals form (leading dash) ─────────────────────────
 
 /// Regression #96: `lw ingest --content=- list item` (equals form, leading dash)
 /// must not be rejected by clap.
+///
+/// Also verifies the leading-dash content actually lands on disk in
+/// `raw/articles/<slug>.md`.
 #[test]
 fn ingest_content_leading_dash_equals_form() {
     let tmp = setup_wiki_in_git_repo();
@@ -220,6 +244,63 @@ fn ingest_content_leading_dash_equals_form() {
     ])
     .assert()
     .success();
+
+    // Read back the produced raw file and verify the leading-dash content landed.
+    // slug_from_title_or_h1("Bullet List", ...) → slugify("Bullet List") → "bullet-list"
+    let raw_path = root.join("raw/articles/bullet-list.md");
+    let contents = std::fs::read_to_string(&raw_path).unwrap_or_else(|e| {
+        panic!(
+            "raw file not found at {}: {e}\n(ingest --content did not write the file)",
+            raw_path.display()
+        )
+    });
+    assert!(
+        contents.contains("- first bullet"),
+        "raw file should contain '- first bullet', got:\n{contents}"
+    );
+    assert!(
+        contents.contains("- second bullet"),
+        "raw file should contain '- second bullet', got:\n{contents}"
+    );
+}
+
+// ─── lw ingest: --stdin and --content are mutually exclusive ─────────────────
+
+/// Regression guard: passing both --stdin and --content must be rejected by
+/// clap with a conflict error (exit 2), not silently drop --content.
+#[test]
+fn ingest_stdin_and_content_conflict_is_rejected() {
+    let tmp = setup_wiki_in_git_repo();
+    let root = tmp.path();
+
+    let output = lw()
+        .args([
+            "--root",
+            root.to_str().unwrap(),
+            "ingest",
+            "--stdin",
+            "--content",
+            "x",
+            "--raw-type",
+            "articles",
+        ])
+        .output()
+        .unwrap();
+
+    // clap exits 2 for argument errors.
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "--stdin + --content should exit with code 2 (clap conflict error), got: {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("content") || stderr.contains("stdin"),
+        "clap error message should mention the conflicting args, got:\n{stderr}"
+    );
 }
 
 // ─── lw capture: positional arg with leading dash ────────────────────────────
