@@ -93,18 +93,30 @@ fn mcp_auto_commit(
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WikiQueryArgs {
-    /// Full-text search query
+    /// Full-text search query (title + body). Tokenised by the jieba
+    /// tokenizer with a lowercase filter, so the text query itself is
+    /// case-insensitive — the case-sensitivity caveats below apply only to
+    /// the keyword filters.
     pub query: String,
-    /// Filter by tags (comma-separated; multiple tags require all to match)
+    /// Filter by tags (comma-separated; multiple tags require all to match).
+    /// Case-sensitive: tag values are stored verbatim, so `Rust` will not
+    /// match a page tagged `rust`. Use the same casing the page uses.
+    /// Empty entries (e.g. trailing commas) are dropped, and the whole
+    /// filter is ignored if every entry is empty.
     #[serde(default)]
     pub tags: Option<String>,
-    /// Filter by category
+    /// Filter by category. Case-sensitive (matches the directory name
+    /// verbatim). Empty string is treated as "no filter".
     #[serde(default)]
     pub category: Option<String>,
-    /// Filter by frontmatter `status` field (e.g. `draft`, `published`)
+    /// Filter by frontmatter `status` field (e.g. `draft`, `published`).
+    /// Case-sensitive: the value must match the frontmatter exactly.
+    /// Empty string is treated as "no filter".
     #[serde(default)]
     pub status: Option<String>,
-    /// Filter by frontmatter `author` field
+    /// Filter by frontmatter `author` field. Case-sensitive: the value
+    /// must match the frontmatter exactly. Empty string is treated as
+    /// "no filter".
     #[serde(default)]
     pub author: Option<String>,
     /// Result ordering: `relevance` (default) | `created_desc` | `created_asc` | `title`

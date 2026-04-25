@@ -58,16 +58,21 @@ enum Commands {
     Query {
         /// Search text (use "" for tag/category-only queries)
         text: String,
-        /// Filter by tag (repeatable; multiple --tag flags AND together)
+        /// Filter by tag (repeatable; multiple --tag flags AND together).
+        /// Case-sensitive: tag values match the frontmatter verbatim, so
+        /// `--tag Rust` will not match a page tagged `rust`.
         #[arg(long)]
         tag: Vec<String>,
-        /// Filter by category
+        /// Filter by category. Case-sensitive (matches the directory name
+        /// verbatim). Empty string is treated as "no filter".
         #[arg(long)]
         category: Option<String>,
-        /// Filter by frontmatter status field (e.g. draft, published)
+        /// Filter by frontmatter status field (e.g. draft, published).
+        /// Case-sensitive. Empty string is treated as "no filter".
         #[arg(long)]
         status: Option<String>,
-        /// Filter by frontmatter author field
+        /// Filter by frontmatter author field. Case-sensitive. Empty
+        /// string is treated as "no filter".
         #[arg(long)]
         author: Option<String>,
         /// Sort order: relevance | created_desc | created_asc | title
