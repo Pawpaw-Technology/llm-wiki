@@ -605,21 +605,32 @@ impl WikiMcpServer {
             Ok((abs_path, page)) => {
                 let content = page.to_markdown();
 
-                // Index the new page so wiki_query can find it immediately.
-                let rel_path = abs_path
+                // Path for JSON response — vault-relative with "wiki/" prefix,
+                // matching the spec example "wiki/tools/foo.md".
+                let json_path = abs_path
                     .strip_prefix(&self.wiki_root)
                     .unwrap_or(&abs_path)
                     .to_string_lossy()
                     .to_string();
-                if let Err(e) = self.searcher.index_page(&rel_path, &page) {
-                    tracing::warn!("Failed to index new page {}: {}", rel_path, e);
+
+                // Path for the Tantivy index — relative to wiki_root/wiki/,
+                // matching the convention used by rebuild() (e.g. "tools/foo.md").
+                let wiki_dir = self.wiki_root.join("wiki");
+                let index_path = abs_path
+                    .strip_prefix(&wiki_dir)
+                    .unwrap_or(&abs_path)
+                    .to_string_lossy()
+                    .to_string();
+
+                if let Err(e) = self.searcher.index_page(&index_path, &page) {
+                    tracing::warn!("Failed to index new page {}: {}", index_path, e);
                 }
                 if let Err(e) = self.searcher.commit() {
                     tracing::warn!("Failed to commit index after wiki_new: {}", e);
                 }
 
                 serde_json::json!({
-                    "path": rel_path,
+                    "path": json_path,
                     "category": args.category,
                     "slug": args.slug,
                     "content": content,
@@ -902,9 +913,10 @@ mod tests {
         // Required fields present
         assert_eq!(v["category"], "tools", "category mismatch: {resp}");
         assert_eq!(v["slug"], "comrak-ast-parser", "slug mismatch: {resp}");
-        assert!(
-            v.get("path").and_then(|p| p.as_str()).is_some(),
-            "missing path: {resp}"
+        assert_eq!(
+            v["path"].as_str(),
+            Some("wiki/tools/comrak-ast-parser.md"),
+            "JSON path must be vault-relative with wiki/ prefix: {resp}"
         );
         let content = v["content"].as_str().expect("missing content field");
         assert!(
@@ -1008,12 +1020,10 @@ mod tests {
             !hits.is_empty(),
             "wiki_query should find the new page, got: {qresp}"
         );
-        let found = hits.iter().any(|h| {
-            h["path"]
-                .as_str()
-                .map(|p| p.contains("unique-foo-title"))
-                .unwrap_or(false)
-        });
-        assert!(found, "hits should include unique-foo-title page: {qresp}");
+        assert!(
+            hits.iter()
+                .any(|h| h["path"].as_str() == Some("tools/unique-foo-title.md")),
+            "expected hit path 'tools/unique-foo-title.md', got {qresp}"
+        );
     }
 }
