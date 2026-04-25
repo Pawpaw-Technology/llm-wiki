@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{
-    FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
+    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, FAST, STORED, STRING,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
@@ -546,7 +546,7 @@ impl Searcher for TantivySearcher {
         // logic in the index layer.
         match query.sort {
             SearchSort::Title => {
-                hits.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+                hits.sort_by_key(|h| h.title.to_lowercase());
             }
             SearchSort::Relevance | SearchSort::CreatedDesc | SearchSort::CreatedAsc => {}
         }
