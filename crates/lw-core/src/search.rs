@@ -124,7 +124,16 @@ impl TantivySearcher {
     /// Callers use this to skip work that would otherwise open the
     /// writer — e.g. a `lw serve` startup rebuild, which would hold
     /// the writer lock for the server's lifetime.
+    ///
+    /// Reloads the reader before checking so long-lived instances see
+    /// commits made by other processes (ReloadPolicy::Manual requires
+    /// explicit reload — it does not auto-refresh).
     pub fn is_empty(&self) -> bool {
+        // Ignore reload errors: is_empty() returns bool, and a stale
+        // snapshot is better than panicking. On success the reader sees
+        // the current on-disk state; on error it falls back to whatever
+        // snapshot it already holds.
+        let _ = self.reader.reload();
         self.reader.searcher().num_docs() == 0
     }
 
@@ -236,6 +245,11 @@ impl Searcher for TantivySearcher {
     #[tracing::instrument(skip(self))]
     fn search(&self, query: &SearchQuery) -> Result<SearchResults> {
         use tantivy::query::AllQuery;
+
+        // Reload before querying so a long-lived instance (e.g. `lw serve`)
+        // sees commits made by other processes. ReloadPolicy::Manual never
+        // auto-refreshes; without this call external writes are invisible.
+        self.reader.reload()?;
 
         let searcher = self.reader.searcher();
 
