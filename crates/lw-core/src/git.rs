@@ -505,8 +505,12 @@ pub fn auto_commit(
 /// `Some(message)` when there are dirty files that aren't being committed.
 fn dirty_elsewhere_warning(repo_root: &Path, paths: &[PathBuf]) -> Option<String> {
     let toplevel = resolve_toplevel(repo_root).ok()?;
+    // `--untracked-files=all` forces individual file listings; without it
+    // git collapses fully-untracked directories (e.g. `?? wiki/`) and our
+    // suffix-matching can't tell whether the targeted page lives inside
+    // that collapse — see the dirty_warning_suppresses_… test below.
     let output = Command::new("git")
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "--untracked-files=all"])
         .current_dir(&toplevel)
         .output()
         .ok()?;
@@ -1045,6 +1049,63 @@ mod tests {
         assert!(
             names.lines().any(|l| l.trim() == "note.md"),
             "expected note.md in commit; got: {names}"
+        );
+    }
+
+    /// Build a repo with `README.md` tracked + the target page only, so the
+    /// dirty-warning function sees `?? wiki/` (collapsed) — the case that
+    /// previously false-positive-warned on a fresh `lw init` + `lw new`.
+    fn repo_with_only_target_dirty(root: &Path) {
+        init_repo(root);
+        fs::write(root.join("README.md"), "x").unwrap();
+        let out = Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "commit init: {out:?}");
+        fs::create_dir_all(root.join("wiki/tools")).unwrap();
+        fs::write(root.join("wiki/tools/foo.md"), "page").unwrap();
+    }
+
+    #[test]
+    fn dirty_warning_suppresses_when_only_dirty_thing_is_target_in_collapsed_dir() {
+        // Regression for #38 reviewer-noted false positive: `git status --porcelain`
+        // collapses an untracked dir (`?? wiki/`) when no tracked files live
+        // under it. Without `--untracked-files=all`, suffix-matching couldn't
+        // see that `wiki/tools/foo.md` lives under that collapse and the
+        // function would warn even though no OTHER file was dirty.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        repo_with_only_target_dirty(root);
+
+        let warning = dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/foo.md")]);
+        assert!(
+            warning.is_none(),
+            "false-positive warning when only the target is dirty: {warning:?}"
+        );
+    }
+
+    #[test]
+    fn dirty_warning_fires_when_truly_other_dirty_files_present() {
+        // Regression guard: the false-positive fix must not silence the
+        // warning when there really are unrelated dirty files.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        repo_with_only_target_dirty(root);
+        fs::write(root.join("scratch.txt"), "draft").unwrap();
+
+        let warning = dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/foo.md")]);
+        let w = warning.expect("warning expected when scratch.txt is also dirty");
+        assert!(
+            w.contains("scratch.txt"),
+            "warning must mention the other dirty file; got: {w}"
         );
     }
 }
