@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{
-    FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
+    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
@@ -20,7 +20,12 @@ use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Te
 /// History:
 /// - `1` — added `status`, `author`, `generator` keyword fields and a fast
 ///   `title_keyword` field for sort-by-title (issue #41).
-const SCHEMA_VERSION: u32 = 1;
+/// - `2` — dropped the unused `title_kw` FAST field. Sort-by-title is
+///   handled in-memory via `hits.sort_by_key(|h| h.title.to_lowercase())`,
+///   so the FAST field cost schema space without delivering anything.
+///   Bumping the version forces existing indexes to rebuild without the
+///   dead column. (issue #41 review feedback)
+const SCHEMA_VERSION: u32 = 2;
 const SCHEMA_VERSION_FILE: &str = ".schema_version";
 
 // ---------------------------------------------------------------------------
@@ -198,7 +203,6 @@ pub struct TantivySearcher {
     writer: Mutex<Option<IndexWriter>>,
     f_path: Field,
     f_title: Field,
-    f_title_keyword: Field,
     f_body: Field,
     f_tags: Field,
     f_category: Field,
@@ -285,11 +289,11 @@ impl TantivySearcher {
         let mut schema_builder = Schema::builder();
         let f_path = schema_builder.add_text_field("path", STRING | STORED);
         let f_title = schema_builder.add_text_field("title", text_options.clone());
-        // Separate keyword + fast field for sort-by-title. STRING is whole-
-        // value untokenized; FAST gives us order_by_u64_field-compatible
-        // ordinal access. We lowercase the value before indexing so the sort
-        // is case-insensitive.
-        let f_title_keyword = schema_builder.add_text_field("title_kw", STRING | STORED | FAST);
+        // Note: a `title_kw` FAST field used to live here for an
+        // `order_by_fast_field` sort-by-title path, but it was never wired
+        // up — `SearchSort::Title` already sorts in memory via
+        // `hits.sort_by_key(|h| h.title.to_lowercase())` on the relevance
+        // top-N. Removed in SCHEMA_VERSION 2 (issue #41 review feedback).
         let f_body = schema_builder.add_text_field("body", text_options);
         let f_tags = schema_builder.add_text_field("tags", STRING | STORED);
         let f_category = schema_builder.add_text_field("category", STRING | STORED);
@@ -327,7 +331,6 @@ impl TantivySearcher {
             writer: Mutex::new(None),
             f_path,
             f_title,
-            f_title_keyword,
             f_body,
             f_tags,
             f_category,
@@ -364,8 +367,6 @@ impl TantivySearcher {
         let mut doc = TantivyDocument::new();
         doc.add_text(self.f_path, rel_path);
         doc.add_text(self.f_title, &page.title);
-        // Lowercased keyword copy of the title for case-insensitive sort.
-        doc.add_text(self.f_title_keyword, page.title.to_lowercase());
         doc.add_text(self.f_body, &page.body);
         for tag in &page.tags {
             doc.add_text(self.f_tags, tag);
