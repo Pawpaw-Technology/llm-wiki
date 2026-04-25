@@ -148,6 +148,59 @@ fn integrate_preserves_other_mcp_entries() {
     assert!(!entries.is_empty(), "expected at least one backup file");
 }
 
+/// Criterion 4 (end-to-end): install → user edits entry → uninstall leaves it alone.
+///
+/// The managed entry is installed, then the user modifies it by adding an `env`
+/// field. `lw integrate --uninstall` must preserve the entry and emit a warning
+/// to stderr. Exit code is still 0.
+#[test]
+#[serial_test::serial]
+fn integrate_uninstall_preserves_user_edited_mcp_entry() {
+    let env_home = TempDir::new().unwrap();
+    let integrations = TempDir::new().unwrap();
+    let skills = TempDir::new().unwrap();
+    let fake_home = TempDir::new().unwrap();
+    make_descriptor(integrations.path(), fake_home.path());
+    make_skills(skills.path());
+
+    // Install the managed entry.
+    lw(env_home.path(), integrations.path(), skills.path())
+        .args(["integrate", "claude-code"])
+        .assert()
+        .success();
+
+    // Simulate the user adding a custom `env` field to the entry.
+    let settings_path = fake_home.path().join(".claude/settings.json");
+    let mut settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    settings["mcpServers"]["llm-wiki"]["env"] =
+        serde_json::json!({"LW_WIKI_ROOT": "/my/custom/wiki"});
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .unwrap();
+
+    // Uninstall must exit 0 and warn, but must NOT remove the entry.
+    lw(env_home.path(), integrations.path(), skills.path())
+        .args(["integrate", "claude-code", "--uninstall"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("user-edited"));
+
+    // Entry is still present with the custom field intact.
+    let settings_after: Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    assert_eq!(
+        settings_after["mcpServers"]["llm-wiki"]["command"], "lw",
+        "command must still be present"
+    );
+    assert_eq!(
+        settings_after["mcpServers"]["llm-wiki"]["env"]["LW_WIKI_ROOT"], "/my/custom/wiki",
+        "user-added env field must survive uninstall"
+    );
+}
+
 /// Build a descriptor TOML that declares strong detection (binary + version_cmd).
 fn make_strong_descriptor(
     integrations: &std::path::Path,
