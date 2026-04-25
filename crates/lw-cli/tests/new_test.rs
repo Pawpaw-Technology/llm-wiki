@@ -152,12 +152,15 @@ fn duplicate_slug_exits_with_error() {
     let page_path = root.join("wiki/tools/dup.md");
     let before = std::fs::read_to_string(&page_path).unwrap();
 
-    // Second call: must fail with exit 1 and a clear message
+    // Second call: must fail with exit 1, and the message must carry a
+    // VAULT-RELATIVE path (issue #87) — not the absolute host path.
     lw().args(args)
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("page already exists:"));
+        .stderr(predicate::str::contains(
+            "page already exists: wiki/tools/dup.md",
+        ));
 
     // File content must be unchanged
     let after = std::fs::read_to_string(&page_path).unwrap();
@@ -212,6 +215,6 @@ fn help_shows_examples_section() {
 #[test]
 fn assert_cmd_and_tempdir_are_used() {
     let _tmp = TempDir::new().unwrap(); // TempDir used
-    // assert_cmd::Command used throughout (see lw() helper above)
+                                        // assert_cmd::Command used throughout (see lw() helper above)
     lw().args(["--version"]).assert().success();
 }
