@@ -62,6 +62,9 @@ pub fn print_query_results_with_freshness(
                 serde_json::to_string_pretty(&envelope)
                     .expect("serialization of string-only struct")
             );
+            if hits.is_empty() {
+                std::process::exit(2);
+            }
         }
         Format::Human => {
             if hits.is_empty() {

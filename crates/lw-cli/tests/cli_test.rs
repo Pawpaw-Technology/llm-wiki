@@ -53,7 +53,8 @@ fn query_json_on_empty_wiki() {
     lw().args(["init", "--root", tmp.path().to_str().unwrap()])
         .assert()
         .success();
-    // JSON format always exits 0, returns empty results
+    // JSON format must exit 2 on no results (same convention as human/brief),
+    // but must still emit valid JSON so callers can parse the empty envelope.
     let output = lw()
         .args([
             "query",
@@ -65,9 +66,50 @@ fn query_json_on_empty_wiki() {
         ])
         .output()
         .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "JSON no-results must exit with code 2"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("stdout must still be valid JSON even when exiting 2");
     assert_eq!(json["total"], 0);
     assert_eq!(json["results"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn query_json_with_results_exits_zero() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/architecture/exitcode.md"),
+        "---\ntitle: Exit Code Test\ntags: [test]\n---\n\nContent for exitcodetesting.\n",
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "query",
+            "exitcodetesting",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "JSON query with results must exit with code 0"
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    assert!(
+        json["total"].as_u64().unwrap() >= 1,
+        "expected at least one result"
+    );
 }
 
 #[test]
@@ -343,8 +385,8 @@ fn query_stale_flag_accepted() {
         "---\ntitle: Stale Flag Test\ntags: [test]\n---\n\nContent for stale flag test.\n",
     )
     .unwrap();
-    // --stale on a newly written file (no git history) should return no stale results
-    // The command should succeed (exit 0 for json format even with no results)
+    // --stale on a newly written file (no git history) should return no stale results.
+    // JSON format must exit 2 on no results, same as human/brief.
     let output = lw()
         .args([
             "query",
@@ -357,7 +399,13 @@ fn query_stale_flag_accepted() {
         ])
         .output()
         .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "JSON no-results must exit with code 2"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("stdout must still be valid JSON even when exiting 2");
     // No git history means pages are treated as fresh, so --stale should filter them out
     assert_eq!(json["total"], 0);
     assert_eq!(json["results"].as_array().unwrap().len(), 0);
