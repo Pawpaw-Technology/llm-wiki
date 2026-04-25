@@ -76,7 +76,7 @@ pub fn merge_entry(
 
 /// True when two entries agree on every field except `_lw_version`. Used to
 /// distinguish a plain version-marker bump from a real user edit.
-fn managed_fields_match(a: &Value, b: &Value) -> bool {
+pub(crate) fn managed_fields_match(a: &Value, b: &Value) -> bool {
     let (Some(a_obj), Some(b_obj)) = (a.as_object(), b.as_object()) else {
         return false;
     };
@@ -285,5 +285,119 @@ mod tests {
     fn remove_entry_returns_false_when_absent() {
         let mut cfg = json!({});
         assert!(!remove_entry(&mut cfg, "mcpServers.llm-wiki"));
+    }
+
+    /// Criterion 4: A pre-existing symlink at the old predictable `*.tmp` path
+    /// must NOT redirect the write to a victim file. The victim must remain
+    /// unchanged and the destination must receive the new content.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_symlink_at_predictable_tmp_does_not_redirect() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        let victim = dir.path().join("victim.json");
+
+        // Write initial content to destination and victim
+        std::fs::write(&path, "{\"old\": true}").unwrap();
+        std::fs::write(&victim, "VICTIM_CONTENT").unwrap();
+
+        // Create symlink at the OLD predictable temp path: settings.json.tmp
+        // (which the buggy code would have used as its staging file)
+        let predictable_tmp = dir.path().join("settings.json.tmp");
+        symlink(&victim, &predictable_tmp).unwrap();
+
+        // Run the write — must not follow the symlink to victim
+        let backup = atomic_write_with_backup(&path, "{\"new\": true}").unwrap();
+
+        // Destination has new content
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"new\": true}",
+            "destination should have new content"
+        );
+        // Victim must be completely untouched
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "VICTIM_CONTENT",
+            "victim file must be unchanged"
+        );
+        // A backup of the original must exist
+        assert!(
+            backup.is_some(),
+            "backup should be created for existing file"
+        );
+    }
+
+    /// Criterion 5: Two consecutive calls on the same path within the same
+    /// second must produce two distinct backup files (no clobber).
+    #[test]
+    fn atomic_write_two_consecutive_backups_are_distinct() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+
+        // First write — creates the file
+        std::fs::write(&path, "{\"v\": 1}").unwrap();
+        let bak1 = atomic_write_with_backup(&path, "{\"v\": 2}")
+            .unwrap()
+            .expect("first backup must exist");
+
+        // Second write (immediately after, same second)
+        let bak2 = atomic_write_with_backup(&path, "{\"v\": 3}")
+            .unwrap()
+            .expect("second backup must exist");
+
+        // The two backup paths must differ
+        assert_ne!(
+            bak1, bak2,
+            "consecutive backups must have distinct paths (no clobber)"
+        );
+        // Both backup files must exist with the correct content
+        assert!(bak1.exists(), "first backup file must exist on disk");
+        assert!(bak2.exists(), "second backup file must exist on disk");
+        assert_eq!(
+            std::fs::read_to_string(&bak1).unwrap(),
+            "{\"v\": 1}",
+            "first backup should contain original content"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&bak2).unwrap(),
+            "{\"v\": 2}",
+            "second backup should contain second-write content"
+        );
+    }
+
+    /// Criterion 6: After a successful write, the destination directory must
+    /// contain no orphan `*.tmp` files.
+    #[test]
+    fn atomic_write_leaves_no_orphan_tmp_files() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+
+        // Write once (new file, no backup)
+        atomic_write_with_backup(&path, "{\"first\": true}").unwrap();
+
+        // Write again (existing file, generates a backup)
+        atomic_write_with_backup(&path, "{\"second\": true}").unwrap();
+
+        // Scan the directory for any *.tmp files — there must be none
+        let tmp_files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|ext| ext == "tmp")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        assert!(
+            tmp_files.is_empty(),
+            "no orphan *.tmp files should remain after a successful write; found: {:?}",
+            tmp_files.iter().map(|e| e.path()).collect::<Vec<_>>()
+        );
     }
 }
