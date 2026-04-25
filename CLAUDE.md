@@ -199,6 +199,20 @@ Switching workspaces requires restarting the agent tool — MCP processes bind t
 - `RUST_LOG=debug lw query "test"` for debug output
 - Logs to stderr, never stdout
 
+## Migration Notes
+
+### 0.x → dirty-warning fix (issue #97)
+
+New vaults get `.lw/search/` and `.lw/backlinks/.built` excluded via the starter-template `.gitignore` files. Existing vaults whose git history already tracked these paths should un-track them once:
+
+```bash
+git rm -r --cached .lw/search/ 2>/dev/null || true
+git rm --cached .lw/backlinks/.built 2>/dev/null || true
+git commit -m "chore(vault): untrack ephemeral lw tooling artifacts"
+```
+
+Advisory only — `dirty_elsewhere_warning` defensively filters these paths regardless of gitignore state, so the warning is silenced even without the `git rm` step. The `git rm` just keeps `git status` clean for humans.
+
 ## Project Conventions
 
 - Edition 2024 (requires Rust 1.85+)
