@@ -207,6 +207,126 @@ pub fn canonicalize_ancestor(path: &Path) -> PathBuf {
     result
 }
 
+/// Request parameters for creating a new wiki page.
+pub struct NewPageRequest<'a> {
+    pub category: &'a str,
+    pub slug: &'a str,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub author: Option<String>,
+}
+
+/// Create a new wiki page with schema-enforced frontmatter and body template.
+///
+/// Validates the slug, checks the category against the schema, enforces required
+/// fields, refuses to overwrite an existing file, then calls `write_page` (which
+/// uses `atomic_write` internally).
+///
+/// # Errors
+///
+/// - `InvalidSlug` — slug is empty, contains `/` or `..`, starts with `.`, or
+///   contains characters outside `[a-z0-9_-]`
+/// - `UnknownCategory` — category is not `_uncategorized` and not listed in
+///   `schema.tags.categories`
+/// - `MissingRequiredField` — a field declared in the category's `required_fields`
+///   is not satisfied by the request
+/// - `PageAlreadyExists` — a file already exists at the computed path
+#[tracing::instrument(skip_all)]
+pub fn new_page(
+    wiki_root: &Path,
+    schema: &WikiSchema,
+    req: NewPageRequest<'_>,
+) -> Result<(PathBuf, Page)> {
+    // Step 1: validate slug — must match ^[a-z0-9_-]+$
+    validate_slug(req.slug)?;
+
+    // Step 2: validate category
+    let category = req.category;
+    if category != "_uncategorized" && !schema.tags.categories.contains(&category.to_string()) {
+        let valid = schema.tags.categories.join(", ");
+        return Err(WikiError::UnknownCategory {
+            name: category.to_string(),
+            valid,
+        });
+    }
+
+    // Step 3: look up CategoryConfig (None → empty template, no required fields)
+    let (template, required_fields) = match schema.category_config(category) {
+        Some(cfg) => (cfg.template.clone(), cfg.required_fields.clone()),
+        None => (String::new(), Vec::new()),
+    };
+
+    // Step 4: check required fields
+    for field in &required_fields {
+        let satisfied = match field.as_str() {
+            "title" => !req.title.is_empty(),
+            "tags" => !req.tags.is_empty(),
+            "author" => req.author.is_some(),
+            // Any field not representable in NewPageRequest is unsatisfiable
+            _ => false,
+        };
+        if !satisfied {
+            return Err(WikiError::MissingRequiredField {
+                category: category.to_string(),
+                field: field.clone(),
+            });
+        }
+    }
+
+    // Step 5: compute target path; refuse to overwrite
+    let target = wiki_root
+        .join("wiki")
+        .join(category)
+        .join(format!("{}.md", req.slug));
+    if target.exists() {
+        return Err(WikiError::PageAlreadyExists { path: target });
+    }
+
+    // Step 6: build Page
+    let page = Page {
+        title: req.title,
+        tags: req.tags,
+        decay: None,
+        sources: vec![],
+        author: req.author,
+        generator: None,
+        related: None,
+        body: template,
+    };
+
+    // Step 7: write atomically via write_page (which calls atomic_write internally)
+    write_page(&target, &page)?;
+
+    // Step 8: return path + page
+    Ok((target, page))
+}
+
+/// Validate that a slug matches `^[a-z0-9_-]+$` and contains no path-separator
+/// sequences (`/`, `..`, leading `.`).
+fn validate_slug(slug: &str) -> Result<()> {
+    if slug.is_empty() {
+        return Err(WikiError::InvalidSlug {
+            slug: slug.to_string(),
+        });
+    }
+    // Reject leading dot (hidden files / relative-path abuse)
+    if slug.starts_with('.') {
+        return Err(WikiError::InvalidSlug {
+            slug: slug.to_string(),
+        });
+    }
+    // Reject any character outside [a-z0-9_-]
+    let valid = slug
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+    if !valid {
+        return Err(WikiError::InvalidSlug {
+            slug: slug.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).
 /// Similar to how git finds `.git/`.
 #[tracing::instrument]

@@ -42,6 +42,18 @@ pub enum WikiError {
         "index at {path} is locked by another lw process (likely `lw serve`) — try again once it exits"
     )]
     IndexLocked { path: PathBuf },
+
+    #[error("page already exists: {path}")]
+    PageAlreadyExists { path: PathBuf },
+
+    #[error("unknown category: {name} (valid: {valid})")]
+    UnknownCategory { name: String, valid: String },
+
+    #[error("category {category} requires field: {field}")]
+    MissingRequiredField { category: String, field: String },
+
+    #[error("invalid slug: {slug} (must match [a-z0-9_-]+, no path separators)")]
+    InvalidSlug { slug: String },
 }
 
 pub type Result<T> = std::result::Result<T, WikiError>;
