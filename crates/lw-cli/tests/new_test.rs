@@ -56,7 +56,7 @@ fn happy_path_creates_file() {
         "frontmatter missing title; content:\n{content}"
     );
     assert!(
-        content.contains('a') && content.contains('b'),
+        content.contains("- a") && content.contains("- b"),
         "frontmatter missing tags; content:\n{content}"
     );
 
@@ -119,11 +119,11 @@ fn format_json_emits_metadata() {
         "JSON 'slug' field mismatch"
     );
 
-    // path must contain category and slug
+    // path must be vault-relative: "wiki/tools/bar.md"
     let path_val = json["path"].as_str().unwrap();
-    assert!(
-        path_val.contains("tools") && path_val.contains("bar"),
-        "path value '{path_val}' doesn't contain category/slug"
+    assert_eq!(
+        path_val, "wiki/tools/bar.md",
+        "path must be vault-relative, got '{path_val}'"
     );
 }
 
