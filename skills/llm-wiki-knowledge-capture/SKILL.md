@@ -9,7 +9,7 @@ when-to-use: |
   explaining a library or tool in depth, walking through a how-to that took real effort to figure out.
 ---
 
-You are helping the user capture knowledge from a conversation into their llm-wiki vault. Follow the 6-step workflow below. Each step is concrete; do not skip steps or batch them silently.
+You are helping the user capture knowledge from a conversation into their llm-wiki vault. Follow the 7-step workflow below. Each step is concrete; do not skip steps or batch them silently.
 
 ## Step 1 — Extract
 
@@ -149,13 +149,15 @@ Write directly via `wiki_write` in `overwrite` mode to `_journal/YYYY-MM-DD.md`.
 
 An orphan page (no inbound links) is a knowledge dead end. After creating a page:
 
-1. **Find related pages** — search for pages likely to mention this topic:
+1. **Find related pages** — search by bare slug and topic keywords. Tantivy treats `[...]` as range
+   query syntax, so pass the slug without brackets; it will match wherever the slug appears inside
+   `[[slug]]` wikilinks in page bodies:
 
 ```json
-{ "tool": "wiki_query", "args": { "query": "[[comrak-ast-parser]]" } }
+{ "tool": "wiki_query", "args": { "query": "comrak-ast-parser" } }
 ```
 
-Also search by topic keywords if the wikilink search returns nothing:
+Also search by topic keywords to catch pages that do not yet have a wikilink to this slug:
 
 ```json
 { "tool": "wiki_query", "args": { "query": "markdown parser rust ast" } }
@@ -163,7 +165,33 @@ Also search by topic keywords if the wikilink search returns nothing:
 
 2. **Add outbound wikilinks** in the new page's body. Use `[[slug]]` syntax for related pages.
 
-3. **Update inbound links** — for each related page found, add `[[new-slug]]` to its relevant section via `upsert_section` or `append_section`. Also update the `related:` frontmatter field on both pages.
+3. **Update inbound links** — for each related page found, add `[[new-slug]]` to its relevant section
+   via `upsert_section` or `append_section`.
+
+4. **Update `related:` frontmatter** — `upsert_section`/`append_section` preserve the original
+   frontmatter unchanged. To modify frontmatter you must use the read-modify-write pattern:
+   a. Read the existing page with `wiki_read`.
+   b. Reconstruct the full page content with the updated `related:` list in the YAML block.
+   c. Write back with `wiki_write` mode `overwrite`.
+
+   Example (adding `comrak-ast-parser` to a related page's frontmatter):
+
+```json
+{ "tool": "wiki_read", "args": { "path": "tools/markdown-tooling.md" } }
+```
+
+Then, after assembling the updated content:
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "tools/markdown-tooling.md",
+    "mode": "overwrite",
+    "content": "---\ntitle: \"Markdown Tooling\"\ntags: [markdown, rust]\nrelated: [comrak-ast-parser]\n---\n\n<original body here>"
+  }
+}
+```
 
 ## Step 7 — Verify
 
@@ -288,9 +316,47 @@ No hit — proceed to create.
 }
 ````
 
-**Step 6**: Search for pages that mention markdown or parsers, add `[[comrak-ast-parser]]` to their Related section.
+**Step 6**: Search by bare slug (Tantivy range syntax forbids brackets) and topic keywords to find
+related pages, then add `[[comrak-ast-parser]]` to their Related section.
 
-**Step 7**: `wiki_read` + `wiki_lint`. Confirm no orphan warning.
+```json
+{ "tool": "wiki_query", "args": { "query": "comrak-ast-parser" } }
+```
+
+```json
+{
+  "tool": "wiki_query",
+  "args": { "query": "markdown parser rust", "limit": 5 }
+}
+```
+
+For each related page found, append the wikilink to its Related section:
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "tools/markdown-tooling.md",
+    "mode": "upsert_section",
+    "section": "Related",
+    "content": "- [[comrak-ast-parser]]"
+  }
+}
+```
+
+The linking here is bidirectional `[[wikilink]]` references in body content only. Frontmatter `related:` updates require the read-modify-write pattern (see Example 3 for the full JSON sequence).
+
+**Step 7**: Read back and lint.
+
+```json
+{ "tool": "wiki_read", "args": { "path": "tools/comrak-ast-parser.md" } }
+```
+
+```json
+{ "tool": "wiki_lint", "args": {} }
+```
+
+Confirm no orphan warning. If the page still shows as an orphan, go back to Step 6.
 
 ---
 
@@ -365,9 +431,47 @@ No relevant hit.
 }
 ```
 
-**Step 6**: Search for related CI or Cargo pages and add bidirectional links.
+**Step 6**: Search by bare slug and topic keywords (no brackets — Tantivy treats `[...]` as range
+syntax), then add `[[fix-stale-cargo-lock-ci]]` to related pages' bodies.
 
-**Step 7**: `wiki_read` + `wiki_lint`.
+```json
+{ "tool": "wiki_query", "args": { "query": "fix-stale-cargo-lock-ci" } }
+```
+
+```json
+{
+  "tool": "wiki_query",
+  "args": { "query": "cargo ci lockfile rust", "limit": 5 }
+}
+```
+
+For each related page found, append the wikilink:
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "guides/rust-ci-tips.md",
+    "mode": "upsert_section",
+    "section": "Related",
+    "content": "- [[fix-stale-cargo-lock-ci]]"
+  }
+}
+```
+
+The linking here is bidirectional `[[wikilink]]` references in body content only. Frontmatter `related:` updates require the read-modify-write pattern (see Example 3 for the full JSON sequence).
+
+**Step 7**: Read back and lint.
+
+```json
+{ "tool": "wiki_read", "args": { "path": "guides/fix-stale-cargo-lock-ci.md" } }
+```
+
+```json
+{ "tool": "wiki_lint", "args": {} }
+```
+
+Confirm no orphan warning. If the page still shows as an orphan, go back to Step 6.
 
 ---
 
@@ -466,7 +570,52 @@ No hit.
 }
 ```
 
-**Step 6**: Search for pages mentioning search or architecture. Link bidirectionally. Update `related:` frontmatter on both sides.
+**Step 6**: Search by bare slug and topic keywords (no brackets — Tantivy treats `[...]` as range
+syntax), add `[[tantivy-over-sqlite-fts]]` to related pages' bodies, then update `related:`
+frontmatter via the read-modify-write pattern (section writes leave frontmatter unchanged).
+
+```json
+{ "tool": "wiki_query", "args": { "query": "tantivy-over-sqlite-fts" } }
+```
+
+```json
+{
+  "tool": "wiki_query",
+  "args": { "query": "search architecture backend rust", "limit": 5 }
+}
+```
+
+For each related page, append the wikilink to its body:
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "concepts/full-text-search.md",
+    "mode": "upsert_section",
+    "section": "Related",
+    "content": "- [[tantivy-over-sqlite-fts]]"
+  }
+}
+```
+
+To also update `related:` frontmatter, read the page first, then overwrite with the modified
+frontmatter block:
+
+```json
+{ "tool": "wiki_read", "args": { "path": "concepts/full-text-search.md" } }
+```
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "concepts/full-text-search.md",
+    "mode": "overwrite",
+    "content": "---\ntitle: \"Full-Text Search\"\ntags: [search, rust]\nrelated: [tantivy-over-sqlite-fts]\n---\n\n<original body here>"
+  }
+}
+```
 
 **Step 7**:
 
@@ -485,12 +634,17 @@ No hit.
 
 ## Hard rules
 
-- **Never create orphan pages.** Every new page must have at least one inbound link from an existing page, or be linked from a category index. Check with `wiki_query "[[slug]]"` after linking to confirm.
+- **Never create orphan pages.** Every new page must have at least one inbound link from an existing
+  page, or be linked from a category index. Confirm with `wiki_query "<slug>"` (bare slug, no
+  brackets — Tantivy treats `[...]` as range syntax) after linking; it will match wherever the slug
+  appears inside `[[slug]]` wikilinks in page bodies.
 - **Reuse existing tags.** Always call `wiki_tags` before inventing a new tag. New tags only when nothing existing fits.
 - **Update existing pages before creating duplicates.** If `wiki_query` returns a close match, read it and decide: update vs. new page. Near-duplicates degrade the wiki.
 - **Attribute sources.** When knowledge comes from an external URL, paper, or tool output, record it in the body's **See Also** / **References** section. Do not invent publication dates or authors.
 - **Never silent-fail.** If a tool call returns an error, report it to the user and explain what went wrong before continuing.
-- **Do not reference unshipped tools.** `wiki_capture` and `wiki_backlinks` do not exist yet. Use `wiki_query "[[slug]]"` to find pages that mention a given page (backlink simulation). Use `wiki_write` for all capture workflows.
+- **Do not reference unshipped tools.** `wiki_capture` and `wiki_backlinks` do not exist yet. Use
+  `wiki_query "<slug>"` (bare slug, no brackets) to find pages that mention a given page (backlink
+  simulation). Use `wiki_write` for all capture workflows.
 
 ## MCP tools available
 
