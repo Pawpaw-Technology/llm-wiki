@@ -63,6 +63,7 @@ impl TestWiki {
     }
 
     /// Write the canonical 5-page sample set. Returns the (rel_path, Page) pairs.
+    #[allow(dead_code)]
     pub fn with_sample_pages(&self) -> Vec<(String, Page)> {
         let pages = sample_pages();
         for (rel, page) in &pages {
@@ -107,6 +108,7 @@ pub fn make_page(title: &str, tags: &[&str], decay: &str, body: &str) -> Page {
 }
 
 /// The canonical 5-page sample set for integration tests.
+#[allow(dead_code)]
 pub fn sample_pages() -> Vec<(String, Page)> {
     vec![
         (

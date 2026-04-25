@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestWiki, make_page};
+use common::{make_page, TestWiki};
 use lw_core::lint::run_lint;
 
 #[test]
@@ -333,5 +333,39 @@ fn lint_reports_stale_journal_entries_older_than_threshold() {
         finding.detail.contains("days") || finding.detail.contains("stale"),
         "stale_journal detail should mention age/stale: {:?}",
         finding.detail
+    );
+}
+
+// ─── Issue #39: orphan rule must exclude `_journal/*` ─────────────────────────
+
+#[test]
+fn lint_excludes_journal_pages_from_orphans() {
+    let wiki = TestWiki::new();
+
+    // A non-journal orphan and a journal page (which is intentionally
+    // captured-not-linked).
+    let orphan = make_page("Orphan", &["tools"], "normal", "Body");
+    wiki.write_page("tools/orphan-page.md", &orphan);
+
+    let journal = make_page(
+        "Daily 2026-04-25",
+        &["journal"],
+        "normal",
+        "Notes for today",
+    );
+    wiki.write_page("_journal/2026-04-25.md", &journal);
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+
+    let orphan_paths: Vec<String> = report.orphan_pages.iter().map(|f| f.path.clone()).collect();
+    assert!(
+        orphan_paths.iter().any(|p| p.contains("orphan-page.md")),
+        "regular page must still be flagged: {orphan_paths:?}"
+    );
+    assert!(
+        !orphan_paths
+            .iter()
+            .any(|p| p.contains("2026-04-25.md") || p.starts_with("_journal/")),
+        "_journal/* pages must be excluded: {orphan_paths:?}"
     );
 }
