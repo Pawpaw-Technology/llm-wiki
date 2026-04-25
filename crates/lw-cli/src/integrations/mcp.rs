@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -76,7 +77,7 @@ pub fn merge_entry(
 
 /// True when two entries agree on every field except `_lw_version`. Used to
 /// distinguish a plain version-marker bump from a real user edit.
-pub(crate) fn managed_fields_match(a: &Value, b: &Value) -> bool {
+fn managed_fields_match(a: &Value, b: &Value) -> bool {
     let (Some(a_obj), Some(b_obj)) = (a.as_object(), b.as_object()) else {
         return false;
     };
@@ -90,34 +91,64 @@ pub(crate) fn managed_fields_match(a: &Value, b: &Value) -> bool {
 }
 
 /// Atomically write a JSON file: backup → temp → fsync → rename.
+///
+/// Staging uses `tempfile::NamedTempFile::new_in(parent)` so the temp path
+/// is unique and exclusive — a pre-existing symlink at any predictable name
+/// cannot redirect the write to a victim file.  Backup filenames carry
+/// nanosecond resolution so two backups created within the same second never
+/// collide.  The parent directory is fsynced after the rename on Unix to
+/// ensure the directory entry is durable.
+///
 /// Returns the backup path so callers can report it.
 pub fn atomic_write_with_backup(
     path: &Path,
     body: &str,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
+
+    // Back up the existing file with a nanosecond-resolution suffix so
+    // two consecutive calls in the same second produce distinct paths.
     let backup_path = if path.exists() {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let bak = path.with_extension(format!(
-            "{}.bak.{ts}",
+            "{}.bak.{nanos}",
             path.extension().and_then(|s| s.to_str()).unwrap_or("")
         ));
         std::fs::copy(path, &bak)?;
         Some(bak)
     } else {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         None
     };
-    let tmp = path.with_extension(format!(
-        "{}.tmp",
-        path.extension().and_then(|s| s.to_str()).unwrap_or("")
-    ));
-    std::fs::write(&tmp, body)?;
-    let f = std::fs::File::open(&tmp)?;
-    f.sync_all()?;
-    std::fs::rename(&tmp, path)?;
+
+    // Stage through an exclusive temp file in the destination directory.
+    // NamedTempFile::new_in creates a file with an unpredictable name,
+    // so a symlink at any guessable path cannot intercept the write.
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.write_all(body.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    // persist() atomically renames the temp file to `path`.
+    // On drop without persist(), NamedTempFile deletes the temp file —
+    // no orphan *.tmp files are ever left behind.
+    tmp.persist(path).map_err(|e| e.error)?;
+
+    sync_parent_dir(parent)?;
     Ok(backup_path)
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(parent: &Path) -> anyhow::Result<()> {
+    let dir = std::fs::File::open(parent)?;
+    dir.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_parent: &Path) -> anyhow::Result<()> {
+    Ok(())
 }
 
 /// Remove an entry from JSON config by key_path. Returns true if removed.
@@ -285,6 +316,83 @@ mod tests {
     fn remove_entry_returns_false_when_absent() {
         let mut cfg = json!({});
         assert!(!remove_entry(&mut cfg, "mcpServers.llm-wiki"));
+    }
+
+    // ---- remove_if_managed tests (Criterion 3) ----
+
+    /// T1: managed entry removed cleanly.
+    #[test]
+    fn remove_if_managed_removes_managed_entry() {
+        let canonical = entry("0.2.0");
+        let mut cfg = json!({"mcpServers": {"llm-wiki": canonical.clone()}});
+        let outcome = remove_if_managed(&mut cfg, "mcpServers.llm-wiki", &canonical);
+        assert_eq!(outcome, RemoveOutcome::Removed);
+        assert!(
+            cfg["mcpServers"]["llm-wiki"].is_null(),
+            "entry should be absent after removal"
+        );
+    }
+
+    /// T1b: managed entry removed even when only version differs (shape match ignores version).
+    #[test]
+    fn remove_if_managed_removes_when_version_differs() {
+        let installed = entry("0.1.0");
+        let canonical = entry("0.2.0"); // current release
+        let mut cfg = json!({"mcpServers": {"llm-wiki": installed}});
+        let outcome = remove_if_managed(&mut cfg, "mcpServers.llm-wiki", &canonical);
+        assert_eq!(outcome, RemoveOutcome::Removed);
+        assert!(cfg["mcpServers"]["llm-wiki"].is_null());
+    }
+
+    /// T2: user-edited entry (extra `env` field) is preserved with PreservedUserEdited.
+    #[test]
+    fn remove_if_managed_preserves_user_edited_extra_field() {
+        let canonical = entry("0.2.0");
+        let mut user_extended = entry("0.2.0");
+        user_extended["env"] = json!({"LW_WIKI_ROOT": "/tmp/custom"});
+        let mut cfg = json!({"mcpServers": {"llm-wiki": user_extended.clone()}});
+        let outcome = remove_if_managed(&mut cfg, "mcpServers.llm-wiki", &canonical);
+        assert!(
+            matches!(outcome, RemoveOutcome::PreservedUserEdited { .. }),
+            "expected PreservedUserEdited, got {outcome:?}"
+        );
+        // Entry must still be present and unchanged.
+        assert_eq!(cfg["mcpServers"]["llm-wiki"], user_extended);
+    }
+
+    /// T2b: user-edited entry (modified `args`) is preserved.
+    #[test]
+    fn remove_if_managed_preserves_user_edited_args() {
+        let canonical = entry("0.2.0");
+        let mut user_edited = entry("0.2.0");
+        user_edited["args"] = json!(["serve", "--root", "/my/wiki"]);
+        let mut cfg = json!({"mcpServers": {"llm-wiki": user_edited.clone()}});
+        let outcome = remove_if_managed(&mut cfg, "mcpServers.llm-wiki", &canonical);
+        assert!(
+            matches!(outcome, RemoveOutcome::PreservedUserEdited { .. }),
+            "expected PreservedUserEdited, got {outcome:?}"
+        );
+        assert_eq!(cfg["mcpServers"]["llm-wiki"], user_edited);
+    }
+
+    /// T3: missing key returns NotPresent.
+    #[test]
+    fn remove_if_managed_not_present_when_key_absent() {
+        let canonical = entry("0.2.0");
+        let mut cfg = json!({});
+        let outcome = remove_if_managed(&mut cfg, "mcpServers.llm-wiki", &canonical);
+        assert_eq!(outcome, RemoveOutcome::NotPresent);
+    }
+
+    /// T3b: NotPresent when parent key exists but target key is absent.
+    #[test]
+    fn remove_if_managed_not_present_when_target_absent_but_parent_exists() {
+        let canonical = entry("0.2.0");
+        let mut cfg = json!({"mcpServers": {"other-tool": {}}});
+        let outcome = remove_if_managed(&mut cfg, "mcpServers.llm-wiki", &canonical);
+        assert_eq!(outcome, RemoveOutcome::NotPresent);
+        // sibling must be untouched
+        assert_eq!(cfg["mcpServers"]["other-tool"], json!({}));
     }
 
     /// Criterion 4: A pre-existing symlink at the old predictable `*.tmp` path
