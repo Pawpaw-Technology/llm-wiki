@@ -173,13 +173,18 @@ fn resolve_toplevel(repo_root: &Path) -> Result<PathBuf> {
 /// stay uncommitted, so a "dirty tree elsewhere" warning never accidentally
 /// captures unrelated edits.
 ///
-/// `paths` are interpreted relative to the *repo root*, not `repo_root` —
-/// callers must pass paths already rooted at the toplevel (typically by
-/// stripping the repo-root prefix from an absolute path first).
+/// `paths` may be absolute or relative; `commit_paths` normalises them
+/// against the actual git toplevel internally:
+/// - absolute paths under the toplevel are stripped to toplevel-relative
+///   form (handles wiki_root being a subdir of a larger repo);
+/// - relative paths are passed through unchanged (interpreted by git as
+///   relative to the toplevel, since we run all commands from there).
 ///
-/// `author` is an optional `"Name <email>"` string. When `Some`, both the
-/// author and committer of the new commit are set to it; otherwise git
-/// uses the configured `user.name`/`user.email`.
+/// `author` is an optional `"Name <email>"` string. A bare name without
+/// `<email>` is accepted — `commit_paths` synthesises a placeholder email
+/// matching `parse_author` so git accepts the `--author` flag. When set,
+/// both author and committer of the new commit are forced to that
+/// identity; otherwise git uses the configured `user.name`/`user.email`.
 ///
 /// Errors:
 /// - `WikiError::Git("not a git repository: …")` if `repo_root` isn't tracked
@@ -205,14 +210,21 @@ pub fn commit_paths(
 
     let toplevel = resolve_toplevel(repo_root)?;
 
+    // Normalise every input path to toplevel-relative form. `git add` and
+    // `git commit -- <paths>` run from the toplevel, so an absolute path
+    // outside the toplevel would error and a wiki-relative path (which
+    // assumes wiki_root == toplevel) would fail with "pathspec did not
+    // match any files" when wiki_root is a subdir of the actual repo.
+    let toplevel_paths: Vec<PathBuf> = paths
+        .iter()
+        .map(|p| normalize_against_toplevel(p, &toplevel))
+        .collect();
+
     // Stage each requested path. Use `git add --` to defang any name that
-    // happens to start with a dash. Paths are interpreted relative to the
-    // git toplevel, so a caller can either hand us repo-relative paths or
-    // absolute paths — git accepts both as long as they resolve under the
-    // toplevel.
+    // happens to start with a dash.
     let mut add_cmd = Command::new("git");
     add_cmd.args(["add", "--"]).current_dir(&toplevel);
-    for p in paths {
+    for p in &toplevel_paths {
         add_cmd.arg(p);
     }
     let add = add_cmd
@@ -236,14 +248,21 @@ pub fn commit_paths(
         // `--author` sets the author header; the committer is taken from
         // user.name / user.email. To make the *committer* match too,
         // override env for this child.
-        commit_cmd.arg(format!("--author={a}"));
+        //
+        // Git rejects bare names like "Just A Name" with
+        //   fatal: --author 'Just A Name' is not 'Name <email>'
+        // so we always synthesize a complete `Name <email>` form using
+        // the same placeholder email parse_author uses for the
+        // committer envs. That way both headers stay in lock-step.
         let (name, email) = parse_author(a);
+        let synthesized = format!("{name} <{email}>");
+        commit_cmd.arg(format!("--author={synthesized}"));
         commit_cmd.env("GIT_COMMITTER_NAME", name);
         commit_cmd.env("GIT_COMMITTER_EMAIL", email);
     }
 
     commit_cmd.arg("--");
-    for p in paths {
+    for p in &toplevel_paths {
         commit_cmd.arg(p);
     }
 
@@ -260,10 +279,27 @@ pub fn commit_paths(
     Ok(())
 }
 
+/// Normalise `p` to a toplevel-relative path. Absolute paths under the
+/// toplevel are stripped to relative form; everything else (including
+/// already-relative paths) passes through unchanged. Used by
+/// `commit_paths` to handle the wiki_root != git_toplevel case (see
+/// issue #38) — callers can hand over absolute paths and we make sure
+/// `git add` / `git commit -- <paths>` see them in the toplevel-relative
+/// form git expects.
+fn normalize_against_toplevel(p: &Path, toplevel: &Path) -> PathBuf {
+    if p.is_absolute()
+        && let Ok(rel) = p.strip_prefix(toplevel)
+    {
+        return rel.to_path_buf();
+    }
+    p.to_path_buf()
+}
+
 /// Best-effort parse of `"Name <email>"` into `(name, email)`. If no `<` is
 /// present, treat the whole string as the name and use a placeholder email
-/// so git doesn't refuse the commit. We only need this for setting the
-/// committer envs — the author header itself is passed through unchanged.
+/// so git doesn't refuse the commit. We use this both for setting the
+/// committer envs and for synthesising a complete `Name <email>` string
+/// when the user supplies a bare name to `--author`.
 fn parse_author(s: &str) -> (String, String) {
     if let Some(open) = s.find('<')
         && let Some(close) = s.find('>')
@@ -963,7 +999,7 @@ mod tests {
         // the toplevel-relative form internally.
         commit_paths(
             &vault,
-            &[page_abs.clone()],
+            std::slice::from_ref(&page_abs),
             "docs(wiki): create vault/page.md",
             None,
         )
