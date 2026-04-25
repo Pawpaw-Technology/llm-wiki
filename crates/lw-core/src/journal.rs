@@ -234,7 +234,8 @@ pub fn find_stale_captures(
             });
         }
     }
-    out.sort_by(|a, b| b.age_days.cmp(&a.age_days));
+    // Oldest first — note `Reverse` to flip the natural ascending sort.
+    out.sort_by_key(|f| std::cmp::Reverse(f.age_days));
     Ok(out)
 }
 
