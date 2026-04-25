@@ -85,13 +85,13 @@ fn query_json_with_results_exits_zero() {
         .success();
     std::fs::write(
         tmp.path().join("wiki/architecture/exitcode.md"),
-        "---\ntitle: Exit Code Test\ntags: [test]\n---\n\nContent for exit code testing.\n",
+        "---\ntitle: Exit Code Test\ntags: [test]\n---\n\nContent for exitcodetesting.\n",
     )
     .unwrap();
     let output = lw()
         .args([
             "query",
-            "exitcode",
+            "exitcodetesting",
             "--root",
             tmp.path().to_str().unwrap(),
             "--format",
@@ -714,10 +714,12 @@ fn read_json_format() {
     assert_eq!(json["path"], "architecture/transformer.md");
     assert_eq!(json["title"], "Flash Attention 2");
     assert!(json["tags"].is_array());
-    assert!(json["body"]
-        .as_str()
-        .unwrap()
-        .contains("reduces memory usage"));
+    assert!(
+        json["body"]
+            .as_str()
+            .unwrap()
+            .contains("reduces memory usage")
+    );
 }
 
 #[test]
