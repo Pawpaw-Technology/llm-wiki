@@ -73,7 +73,8 @@ Spec, plans, and smoke transcripts that documented the v0.2.0 product wrapper ro
 - Tags are free-form (not enumerated in schema); categories are directories
 - `_uncategorized/` is the fallback directory; lint reminds to categorize
 - Tantivy's `IndexWriter` is opened lazily on first write, not eagerly in `TantivySearcher::new`. `lw serve` would otherwise hold the writer lock for its lifetime and block every concurrent `lw query`. `WikiError::IndexLocked` lets read-only callers fall back to the existing index instead of failing.
-- Crash-safe file writes go through `lw_core::fs::atomic_write` (unique `NamedTempFile::new_in(parent)` → fsync → rename → parent-dir fsync on Unix). `write_page`, the CLI section-write path (`lw write`), and the MCP `wiki_write` handler all funnel through it. Use it for any new code that writes a file the agent could be reading concurrently — never `std::fs::write` directly into a vault path.
+- Crash-safe file writes go through `lw_core::fs::atomic_write` (unique `NamedTempFile::new_in(parent)` → fsync → rename → parent-dir fsync on Unix). `write_page`, the CLI section-write path (`lw write`), the MCP `wiki_write` handler, and `lw_core::fs::new_page` (used by `lw new` and `wiki_new`) all funnel through it. Use it for any new code that writes a file the agent could be reading concurrently — never `std::fs::write` directly into a vault path.
+- Schema-driven page creation: `[categories.<name>]` blocks in `schema.toml` (`required_fields`, `template`, `review_days`) are the source of truth for `lw new` / `wiki_new`. Add new categories by editing the schema TOML — never hardcode required fields in CLI/MCP layers.
 
 ## CLI Commands
 
@@ -83,6 +84,7 @@ Spec, plans, and smoke transcripts that documented the v0.2.0 product wrapper ro
 lw init                                            # scaffold wiki at --root or cwd
 lw query "attention" --format json                 # search
 lw ingest paper.pdf --category architecture --yes  # raw filing
+lw new tools/my-page --title "My Page" --tags rust,cli      # schema-validated page creation
 lw read architecture/transformer.md
 lw write tools/page.md --mode upsert --section Usage
 lw lint --format json
@@ -103,7 +105,7 @@ lw doctor                                           # full health checklist + re
 
 ## MCP Tools
 
-`wiki_query`, `wiki_read`, `wiki_browse`, `wiki_tags`, `wiki_write`, `wiki_ingest`, `wiki_lint`, `wiki_stats`
+`wiki_query`, `wiki_read`, `wiki_browse`, `wiki_tags`, `wiki_write`, `wiki_new`, `wiki_ingest`, `wiki_lint`, `wiki_stats`
 
 ## Workspace registry
 
