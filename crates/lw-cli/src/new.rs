@@ -70,9 +70,13 @@ pub fn run(
     let (abs_path, _page) = new_page(root, &schema, req)?;
 
     // Update the backlink index for the new page (issue #39).
-    if let Ok(rel) = abs_path.strip_prefix(root.join("wiki")) {
-        update_after_write(root, rel);
-    }
+    // Collect any sidecar paths written so we can include them in the
+    // same auto-commit as the page (Option A, issue #97).
+    let sidecar_paths = if let Ok(rel) = abs_path.strip_prefix(root.join("wiki")) {
+        update_after_write(root, rel)
+    } else {
+        vec![]
+    };
 
     // Compute a wiki-relative display path: strip the wiki_root prefix
     let display_path = abs_path
@@ -80,12 +84,16 @@ pub fn run(
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| abs_path.to_string_lossy().into_owned());
 
-    // Auto-commit (issue #38). Hand `commit_paths` the *absolute* page
-    // path so it can re-resolve against the actual git toplevel — the
-    // wiki root is allowed to be a subdir of a larger repo.
+    // Auto-commit (issue #38). Pass the page path plus any backlink sidecar
+    // paths written by update_after_write so they land in the same commit
+    // (Option A, issue #97). Hand `commit_paths` absolute paths so it can
+    // re-resolve against the actual git toplevel — the wiki root is allowed
+    // to be a subdir of a larger repo.
+    let mut commit_paths_vec = vec![abs_path.clone()];
+    commit_paths_vec.extend(sidecar_paths);
     run_auto_commit(
         root,
-        std::slice::from_ref(&abs_path),
+        &commit_paths_vec,
         CommitAction::Create,
         &display_path,
         AutoCommitFlags {

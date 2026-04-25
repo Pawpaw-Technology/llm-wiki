@@ -593,11 +593,20 @@ impl WikiMcpServer {
                 }
 
                 // Incrementally update the backlink index for this source page.
-                if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki"))
-                    && let Err(e) = backlinks::update_for_page(&self.wiki_root, rel)
-                {
-                    tracing::warn!("backlink update failed for {}: {e}", args.path);
-                }
+                // Collect sidecar paths written so they land in the same commit
+                // as the page (Option A, issue #97).
+                let sidecar_paths =
+                    if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki")) {
+                        match backlinks::update_for_page(&self.wiki_root, rel) {
+                            Ok(paths) => paths,
+                            Err(e) => {
+                                tracing::warn!("backlink update failed for {}: {e}", args.path);
+                                vec![]
+                            }
+                        }
+                    } else {
+                        vec![]
+                    };
 
                 if let Err(e) = self.searcher.index_page(&args.path, &page) {
                     tracing::warn!("Failed to index page {}: {}", args.path, e);
@@ -606,9 +615,11 @@ impl WikiMcpServer {
                     tracing::warn!("Failed to commit index: {}", e);
                 }
 
+                let mut commit_paths = vec![abs_path.clone()];
+                commit_paths.extend(sidecar_paths);
                 let dirty_warning = match mcp_auto_commit(
                     &self.wiki_root,
-                    std::slice::from_ref(&abs_path),
+                    &commit_paths,
                     CommitAction::Update,
                     &display_path,
                     McpCommitArgs {
@@ -686,20 +697,31 @@ impl WikiMcpServer {
                 // paths can introduce or drop `[[wikilinks]]` just like
                 // overwrite. Without this call, append_section /
                 // upsert_section silently leave the index stale.
-                if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki"))
-                    && let Err(e) = backlinks::update_for_page(&self.wiki_root, rel)
-                {
-                    tracing::warn!("backlink update failed for {}: {e}", args.path);
-                }
+                // Collect sidecar paths written so they land in the same
+                // commit as the page (Option A, issue #97).
+                let sidecar_paths_sec =
+                    if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki")) {
+                        match backlinks::update_for_page(&self.wiki_root, rel) {
+                            Ok(paths) => paths,
+                            Err(e) => {
+                                tracing::warn!("backlink update failed for {}: {e}", args.path);
+                                vec![]
+                            }
+                        }
+                    } else {
+                        vec![]
+                    };
 
                 let action = if args.mode == "append_section" {
                     CommitAction::Append
                 } else {
                     CommitAction::Upsert
                 };
+                let mut commit_paths_sec = vec![abs_path.clone()];
+                commit_paths_sec.extend(sidecar_paths_sec);
                 let dirty_warning = match mcp_auto_commit(
                     &self.wiki_root,
-                    std::slice::from_ref(&abs_path),
+                    &commit_paths_sec,
                     action,
                     &display_path,
                     McpCommitArgs {
@@ -917,11 +939,23 @@ impl WikiMcpServer {
                     .to_string();
 
                 // Incrementally update the backlink index for this new source page.
-                if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki"))
-                    && let Err(e) = backlinks::update_for_page(&self.wiki_root, rel)
-                {
-                    tracing::warn!("backlink update failed for new page {}: {e}", index_path);
-                }
+                // Collect sidecar paths written so they land in the same commit
+                // as the page (Option A, issue #97).
+                let sidecar_paths_new =
+                    if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki")) {
+                        match backlinks::update_for_page(&self.wiki_root, rel) {
+                            Ok(paths) => paths,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "backlink update failed for new page {}: {e}",
+                                    index_path
+                                );
+                                vec![]
+                            }
+                        }
+                    } else {
+                        vec![]
+                    };
 
                 if let Err(e) = self.searcher.index_page(&index_path, &page) {
                     tracing::warn!("Failed to index new page {}: {}", index_path, e);
@@ -930,13 +964,16 @@ impl WikiMcpServer {
                     tracing::warn!("Failed to commit index after wiki_new: {}", e);
                 }
 
-                // Auto-commit the new page (issue #38). Pass the
-                // *absolute* page path so `commit_paths` can re-resolve
-                // it against the actual git toplevel — wiki_root is
-                // allowed to be a subdir of a larger repo.
+                // Auto-commit the new page (issue #38). Pass the page path
+                // plus any backlink sidecar paths so they land in the same
+                // commit (Option A, issue #97). Absolute paths so
+                // `commit_paths` can re-resolve against the actual git toplevel
+                // — wiki_root is allowed to be a subdir of a larger repo.
+                let mut commit_paths_new = vec![abs_path.clone()];
+                commit_paths_new.extend(sidecar_paths_new);
                 let dirty_warning = match mcp_auto_commit(
                     &self.wiki_root,
-                    std::slice::from_ref(&abs_path),
+                    &commit_paths_new,
                     CommitAction::Create,
                     &json_path,
                     McpCommitArgs {

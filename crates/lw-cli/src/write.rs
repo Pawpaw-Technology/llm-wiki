@@ -96,9 +96,13 @@ pub fn run(
     // is a no-op for both the file and git.
     if wrote_anything {
         // Update the backlink index for the modified page (issue #39).
-        if let Ok(rel) = abs_path.strip_prefix(root.join("wiki")) {
-            update_after_write(root, rel);
-        }
+        // Collect any sidecar paths written so we can include them in the
+        // same auto-commit as the page (Option A, issue #97).
+        let sidecar_paths = if let Ok(rel) = abs_path.strip_prefix(root.join("wiki")) {
+            update_after_write(root, rel)
+        } else {
+            vec![]
+        };
 
         // Display path stays wiki-relative for the commit subject; the
         // path handed to `commit_paths` is *absolute* so it works when
@@ -107,9 +111,11 @@ pub fn run(
             .strip_prefix(root)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| abs_path.to_string_lossy().into_owned());
+        let mut commit_paths_vec = vec![abs_path.clone()];
+        commit_paths_vec.extend(sidecar_paths);
         run_auto_commit(
             root,
-            std::slice::from_ref(&abs_path),
+            &commit_paths_vec,
             action,
             &display_path,
             AutoCommitFlags {
