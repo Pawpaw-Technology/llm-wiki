@@ -147,9 +147,17 @@ Switching workspaces requires restarting the agent tool — MCP processes bind t
 
 - **Subagents MUST commit their own work.** Uncommitted changes = task NOT done.
 - **Subagents MUST report git SHA** of their commits in the status report.
-- **Subagents work in worktrees** (`git worktree add`), never directly on main.
+- **Subagents work in worktrees on a feature branch.** Verify with `git branch --show-current` before any push — never `main`.
 - **No racing** — parallel agents must be in separate worktrees touching different files.
 - After merge to main, run full `cargo test` before pushing.
+
+#### PR-only protocol (non-negotiable)
+
+- **Never push to `main` directly.** Branch protection allowing admin override is NOT permission. Always `git push -u origin HEAD` to a feature branch, then `gh pr create`.
+- **Never self-merge.** Forbidden: `gh pr merge`, `--admin`, any merge command. The orchestrator merges after independent review.
+- **Never bypass hooks/checks.** Forbidden: `--no-verify`, `--no-gpg-sign`, `-c commit.gpgsign=false`.
+- **CI green is the success gate, not local `cargo test`.** Run `gh pr checks <PR> --watch --fail-fast` and only report success after all checks pass.
+- **Reports are verified.** The orchestrator independently checks `gh pr view`, `gh pr checks`, and `git log origin/main` against every report. False PR numbers, missed CI failures, or hidden direct pushes are detected and treated as workflow failure.
 
 ### Commit Discipline
 
