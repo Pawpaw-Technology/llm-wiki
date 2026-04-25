@@ -1,7 +1,45 @@
 use crate::page::Page;
 use crate::schema::WikiSchema;
 use crate::{Result, WikiError};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+/// Write `body` to `path` atomically: stage to a unique temp file in the same
+/// directory, fsync the data, rename into place, then fsync the parent directory
+/// (Unix only). This mirrors the pattern in `Config::save_to` from lw-cli.
+///
+/// Using a randomly-named temp file (`NamedTempFile::new_in`) means we never
+/// follow a pre-placed victim symlink at a predictable temp path, and a crash
+/// between the write and the rename leaves only a stale temp file rather than a
+/// truncated page.
+#[tracing::instrument(skip(body))]
+pub fn atomic_write(path: &Path, body: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.write_all(body)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
+
+    atomic_write_sync_parent(parent)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn atomic_write_sync_parent(parent: &Path) -> Result<()> {
+    let dir = std::fs::File::open(parent)?;
+    dir.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn atomic_write_sync_parent(_parent: &Path) -> Result<()> {
+    Ok(())
+}
 
 #[tracing::instrument(skip(schema))]
 pub fn init_wiki(root: &Path, schema: &WikiSchema) -> Result<()> {
@@ -32,11 +70,7 @@ pub fn read_page(path: &Path) -> Result<Page> {
 
 #[tracing::instrument(skip(page))]
 pub fn write_page(path: &Path, page: &Page) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, page.to_markdown())?;
-    Ok(())
+    atomic_write(path, page.to_markdown().as_bytes())
 }
 
 #[tracing::instrument]

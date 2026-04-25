@@ -1,7 +1,9 @@
 //! MCP server for LLM Wiki.
 //! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint, wiki_stats tools.
 
-use lw_core::fs::{category_from_path, list_pages, read_page, validate_wiki_path, write_page};
+use lw_core::fs::{
+    atomic_write, category_from_path, list_pages, read_page, validate_wiki_path, write_page,
+};
 use lw_core::git::{self, FreshnessLevel};
 use lw_core::ingest;
 use lw_core::page::Page;
@@ -437,7 +439,7 @@ impl WikiMcpServer {
                 };
 
                 let assembled = format!("{frontmatter}{}", write_result.body);
-                if let Err(e) = std::fs::write(&abs_path, &assembled) {
+                if let Err(e) = atomic_write(&abs_path, assembled.as_bytes()) {
                     return serde_json::json!({
                         "error": format!("Failed to write page: {e}")
                     })
