@@ -629,6 +629,16 @@ impl WikiMcpServer {
                     .to_string();
                 }
 
+                // Incrementally update the backlink index — section-write
+                // paths can introduce or drop `[[wikilinks]]` just like
+                // overwrite. Without this call, append_section /
+                // upsert_section silently leave the index stale.
+                if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki"))
+                    && let Err(e) = backlinks::update_for_page(&self.wiki_root, rel)
+                {
+                    tracing::warn!("backlink update failed for {}: {e}", args.path);
+                }
+
                 let action = if args.mode == "append_section" {
                     CommitAction::Append
                 } else {
