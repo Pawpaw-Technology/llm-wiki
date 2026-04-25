@@ -505,8 +505,12 @@ pub fn auto_commit(
 /// `Some(message)` when there are dirty files that aren't being committed.
 fn dirty_elsewhere_warning(repo_root: &Path, paths: &[PathBuf]) -> Option<String> {
     let toplevel = resolve_toplevel(repo_root).ok()?;
+    // `--untracked-files=all` forces individual file listings; without it
+    // git collapses fully-untracked directories (e.g. `?? wiki/`) and our
+    // suffix-matching can't tell whether the targeted page lives inside
+    // that collapse — see the dirty_warning_suppresses_… test below.
     let output = Command::new("git")
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "--untracked-files=all"])
         .current_dir(&toplevel)
         .output()
         .ok()?;
