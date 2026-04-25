@@ -94,11 +94,16 @@ enum Commands {
         after_help = "Examples:\n  lw ingest paper.pdf --category architecture --raw-type papers\n  lw ingest https://arxiv.org/abs/2405.12345 --category architecture --yes\n  lw ingest notes.md --title \"Meeting Notes\" --category ops --yes\n  cat article.md | lw ingest --stdin --title \"Article\" --yes\n  lw ingest paper.pdf --category architecture --yes --no-commit\n  lw ingest paper.pdf --category architecture --yes --push --author \"Alice <a@x>\""
     )]
     Ingest {
-        /// Source file path or URL (omit if using --stdin)
+        /// Source file path or URL (omit if using --stdin or --content)
         source: Option<String>,
         /// Read from stdin
         #[arg(long)]
         stdin: bool,
+        /// Inline content to ingest (alternative to a file path or --stdin).
+        /// Accepts values that start with `-` (e.g. markdown list items).
+        /// Cannot be combined with --stdin (mutually exclusive).
+        #[arg(long, allow_hyphen_values = true, conflicts_with = "stdin")]
+        content: Option<String>,
         /// Page title (auto-derived from filename if omitted)
         #[arg(long)]
         title: Option<String>,
@@ -255,8 +260,9 @@ enum Commands {
         /// Section name for append/upsert modes
         #[arg(long)]
         section: Option<String>,
-        /// Content to write (alternative to stdin)
-        #[arg(long)]
+        /// Content to write (alternative to stdin). Accepts values that start
+        /// with `-` (e.g. markdown list items like `- [[bar]]`).
+        #[arg(long, allow_hyphen_values = true)]
         content: Option<String>,
         /// Skip the auto-commit that normally follows a successful write
         #[arg(long)]
@@ -287,7 +293,9 @@ enum Commands {
         after_help = "Examples:\n  lw capture \"comrak round-trips markdown via arena AST\"\n  lw capture --tag rust --tag markdown \"see docs.rs/comrak\"\n  lw capture --source \"https://example.com/article\" \"key insight\"\n  lw capture --no-commit \"draft thought, don't commit yet\""
     )]
     Capture {
-        /// Capture text. Wrap multi-word content in quotes.
+        /// Capture text. Wrap multi-word content in quotes. Accepts values
+        /// that start with `-` (e.g. markdown list items like `- idea`).
+        #[arg(allow_hyphen_values = true)]
         content: String,
         /// Tag to attach to the capture line (`#tag`). Repeatable.
         #[arg(long)]
@@ -487,6 +495,7 @@ fn main() {
         Commands::Ingest {
             source,
             stdin,
+            content,
             title,
             category,
             tags,
@@ -502,6 +511,7 @@ fn main() {
                 &root,
                 source.as_deref(),
                 stdin,
+                content.as_deref(),
                 &title,
                 &category,
                 &tags,

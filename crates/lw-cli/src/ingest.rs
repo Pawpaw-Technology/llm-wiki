@@ -29,6 +29,7 @@ pub fn run(
     root: &Path,
     source: Option<&str>,
     stdin_mode: bool,
+    inline_content: Option<&str>,
     title: &Option<String>,
     category: &Option<String>,
     tags: &Option<String>,
@@ -109,11 +110,13 @@ pub fn run(
         return Ok(());
     }
 
-    // Resolve source: URL download, stdin, or local file
+    // Resolve source: URL download, stdin, inline --content, or local file
     let _url_temp_dir;
     let _url_file_path;
     let _stdin_temp_dir;
     let _stdin_file_path;
+    let _content_temp_dir;
+    let _content_file_path;
     let source_path = if stdin_mode {
         let mut content = String::new();
         io::stdin().lock().read_to_string(&mut content)?;
@@ -126,12 +129,22 @@ pub fn run(
         _stdin_temp_dir = dir;
         _stdin_file_path = file_path;
         _stdin_file_path.as_path()
+    } else if let Some(content) = inline_content {
+        // --content flag: treat inline text exactly like stdin content.
+        let slug = slug_from_title_or_h1(title.as_deref(), content);
+        let dir = tempfile::tempdir()?;
+        let file_path = dir.path().join(format!("{slug}.md"));
+        std::fs::write(&file_path, content)?;
+        _content_temp_dir = dir;
+        _content_file_path = file_path;
+        _content_file_path.as_path()
     } else {
         let source_str = source_str.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
                 "No source specified.\n  \
                  Usage: lw ingest <file|url> [--category X] [--yes]\n  \
-                 Or:    cat file | lw ingest --stdin --title \"Title\" --yes"
+                 Or:    cat file | lw ingest --stdin --title \"Title\" --yes\n  \
+                 Or:    lw ingest --content \"inline text\" --title \"Title\" --yes"
             )
         })?;
 
