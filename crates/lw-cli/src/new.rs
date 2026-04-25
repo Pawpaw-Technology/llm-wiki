@@ -1,5 +1,5 @@
 use crate::output::Format;
-use lw_core::fs::{load_schema, new_page, NewPageRequest};
+use lw_core::fs::{NewPageRequest, load_schema, new_page};
 use serde::Serialize;
 use std::path::Path;
 

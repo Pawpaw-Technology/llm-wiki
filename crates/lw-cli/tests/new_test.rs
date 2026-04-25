@@ -212,6 +212,6 @@ fn help_shows_examples_section() {
 #[test]
 fn assert_cmd_and_tempdir_are_used() {
     let _tmp = TempDir::new().unwrap(); // TempDir used
-                                        // assert_cmd::Command used throughout (see lw() helper above)
+    // assert_cmd::Command used throughout (see lw() helper above)
     lw().args(["--version"]).assert().success();
 }
