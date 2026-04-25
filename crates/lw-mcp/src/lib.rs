@@ -1924,11 +1924,11 @@ mod tests {
     /// Regression: review feedback on PR #94. The `append_section` /
     /// `upsert_section` paths in `wiki_write` previously skipped
     /// `backlinks::update_for_page`, so adding a `[[wikilink]]` via a
-    /// section write left the backlink index stale. To avoid masking the
-    /// bug behind a full `ensure_index` rebuild on the subsequent
-    /// `wiki_backlinks` call, we pre-seed an unrelated sidecar so
-    /// `.lw/backlinks/` is non-empty (and thus `ensure_index` skips the
-    /// rebuild — see also the `.built` sentinel test in lw-core).
+    /// section write left the backlink index stale. We call
+    /// `rebuild_index` after the initial overwrite seed so the `.built`
+    /// sentinel exists and the subsequent `wiki_backlinks` call
+    /// short-circuits — otherwise a full rebuild on the query side
+    /// would re-discover the new wikilink and mask the bug.
     #[tokio::test]
     async fn wiki_write_append_section_updates_backlinks() {
         let (tmp, server) = spawn_server();
@@ -1959,17 +1959,10 @@ mod tests {
         };
         let _ = server.wiki_write(Parameters(source));
 
-        // Pre-seed an unrelated sidecar to keep .lw/backlinks/ non-empty.
-        // Without this, `ensure_index` on the wiki_backlinks call would
-        // run a full rebuild and mask the bug because the rebuild walk
-        // would re-discover the new wikilink anyway.
-        let backlinks_dir = tmp.path().join(lw_core::backlinks::BACKLINKS_DIR);
-        std::fs::create_dir_all(&backlinks_dir).unwrap();
-        std::fs::write(
-            backlinks_dir.join("__sentinel__.json"),
-            br#"{"target":"__sentinel__","sources":[]}"#,
-        )
-        .unwrap();
+        // Mark the index as built so wiki_backlinks short-circuits
+        // ensure_index. Without this, ensure_index would walk the wiki
+        // and discover the new wikilink, masking the bug.
+        lw_core::backlinks::rebuild_index(tmp.path()).expect("rebuild ok");
 
         // Now append a [[append-target]] reference via append_section.
         let append = WikiWriteArgs {
@@ -2036,14 +2029,8 @@ mod tests {
         };
         let _ = server.wiki_write(Parameters(source));
 
-        // Pre-seed an unrelated sidecar so ensure_index doesn't rebuild.
-        let backlinks_dir = tmp.path().join(lw_core::backlinks::BACKLINKS_DIR);
-        std::fs::create_dir_all(&backlinks_dir).unwrap();
-        std::fs::write(
-            backlinks_dir.join("__sentinel__.json"),
-            br#"{"target":"__sentinel__","sources":[]}"#,
-        )
-        .unwrap();
+        // Same masking-prevention as the append test.
+        lw_core::backlinks::rebuild_index(tmp.path()).expect("rebuild ok");
 
         // upsert a Related section that adds a [[upsert-target]] link.
         let upsert = WikiWriteArgs {

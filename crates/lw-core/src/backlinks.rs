@@ -49,6 +49,13 @@ pub struct BacklinkRecord {
 /// Relative path (from wiki root) to the backlink-sidecar directory.
 pub const BACKLINKS_DIR: &str = ".lw/backlinks";
 
+/// Filename of the sentinel file written by `rebuild_index` to mark the
+/// index as built. Its existence is what `ensure_index` checks to decide
+/// whether a rebuild is necessary — the previous "directory non-empty"
+/// heuristic incorrectly forced a full O(n_pages) rebuild on every call
+/// for any wiki with no inter-page wikilinks.
+const BUILT_SENTINEL: &str = ".built";
+
 /// Extract all `(slug, line)` pairs for every `[[wikilink]]` in `body`.
 /// Each tuple contains the resolved slug (pre-pipe portion) and the full line
 /// containing the link. Wikilinks inside code fences are included intentionally
@@ -208,24 +215,32 @@ pub fn write_index(wiki_root: &Path, map: &BTreeMap<String, Vec<BacklinkSource>>
 }
 
 /// Rebuild the full backlink index from scratch: walk wiki/, build map, persist sidecars.
+/// Writes the `.built` sentinel on success so subsequent `ensure_index` calls short-circuit
+/// even when the wiki has no inter-page links (and thus no sidecar files).
 pub fn rebuild_index(wiki_root: &Path) -> Result<()> {
     let map = build_index(wiki_root)?;
-    write_index(wiki_root, &map)
+    write_index(wiki_root, &map)?;
+
+    // Mark the index as built. We do this only after write_index returns
+    // Ok so a partial rebuild does not falsely advertise itself as
+    // complete. The sentinel content is intentionally empty — only
+    // existence is the signal.
+    let dir = wiki_root.join(BACKLINKS_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| crate::WikiError::Io(std::io::Error::other(e.to_string())))?;
+    let sentinel = dir.join(BUILT_SENTINEL);
+    atomic_write(&sentinel, b"")?;
+    Ok(())
 }
 
-/// Ensure the backlink index directory exists and contains at least one file.
-/// If the directory is absent or empty, runs a full `rebuild_index`.
+/// Ensure the backlink index has been built. Checks the `.built` sentinel
+/// file; runs a full `rebuild_index` only when the sentinel is absent.
+/// This avoids the previous bug where a wiki with no `[[wikilinks]]`
+/// kept `.lw/backlinks/` empty and forced an O(n_pages) rebuild on every
+/// `wiki_backlinks` / `lw backlinks` invocation.
 pub fn ensure_index(wiki_root: &Path) -> Result<()> {
-    let dir = wiki_root.join(BACKLINKS_DIR);
-    let needs_build = if dir.exists() {
-        // Consider empty dir as needing a build
-        std::fs::read_dir(&dir)
-            .map(|mut d| d.next().is_none())
-            .unwrap_or(true)
-    } else {
-        true
-    };
-    if needs_build {
+    let sentinel = wiki_root.join(BACKLINKS_DIR).join(BUILT_SENTINEL);
+    if !sentinel.exists() {
         rebuild_index(wiki_root)?;
     }
     Ok(())
@@ -273,6 +288,10 @@ pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<()> {
     let backlinks_dir = wiki_root.join(BACKLINKS_DIR);
 
     // Gather all slugs that previously had this source (by scanning existing sidecars).
+    // FIXME: O(n_sidecars) scan over the whole index on every page write —
+    // acceptable for typical vaults (<1000 pages) but warrants benchmarking
+    // before scaling further. A reverse-index (source-page → outbound slugs)
+    // would let us skip this walk.
     let old_slugs: Vec<String> = if backlinks_dir.exists() {
         let mut v = Vec::new();
         for entry in std::fs::read_dir(&backlinks_dir)
