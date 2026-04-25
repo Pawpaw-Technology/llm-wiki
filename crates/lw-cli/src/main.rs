@@ -1,3 +1,4 @@
+mod backlinks;
 mod capture;
 mod config;
 mod doctor;
@@ -212,6 +213,19 @@ enum Commands {
         /// Optional `source:` line recorded in the commit body
         #[arg(long)]
         source: Option<String>,
+    },
+
+    /// Show all pages that link to a given wiki page (inbound backlinks)
+    #[command(
+        after_help = "Examples:\n  lw backlinks bar\n  lw backlinks tools/bar.md\n  lw backlinks wiki/tools/bar.md\n  lw backlinks bar --format json"
+    )]
+    Backlinks {
+        /// Target page: bare slug (e.g. \"bar\"), category-relative path
+        /// (\"tools/bar.md\"), or vault-relative path (\"wiki/tools/bar.md\")
+        target: String,
+        /// Output format (human or json)
+        #[arg(short = 'o', long, default_value = "human")]
+        format: Format,
     },
 
     /// Write or update a wiki page (overwrite, append to section, or upsert section)
@@ -551,6 +565,13 @@ fn main() {
                     source,
                 },
             ),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Backlinks { target, format } => match resolve_root(cli.root) {
+            Ok(root) => backlinks::run(&root, &target, &format),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);

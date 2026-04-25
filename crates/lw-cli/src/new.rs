@@ -1,3 +1,4 @@
+use crate::backlinks::update_after_write;
 use crate::git_commit::{AutoCommitFlags, run_auto_commit};
 use crate::output::Format;
 use lw_core::fs::{NewPageRequest, load_schema, new_page};
@@ -67,6 +68,11 @@ pub fn run(
     };
 
     let (abs_path, _page) = new_page(root, &schema, req)?;
+
+    // Update the backlink index for the new page (issue #39).
+    if let Ok(rel) = abs_path.strip_prefix(root.join("wiki")) {
+        update_after_write(root, rel);
+    }
 
     // Compute a wiki-relative display path: strip the wiki_root prefix
     let display_path = abs_path

@@ -1,3 +1,4 @@
+use crate::backlinks::update_after_write;
 use crate::git_commit::{AutoCommitFlags, run_auto_commit};
 use lw_core::fs::{atomic_write, validate_wiki_path, write_page};
 use lw_core::git::CommitAction;
@@ -94,6 +95,11 @@ pub fn run(
     // Auto-commit only when something actually hit disk. An empty append
     // is a no-op for both the file and git.
     if wrote_anything {
+        // Update the backlink index for the modified page (issue #39).
+        if let Ok(rel) = abs_path.strip_prefix(root.join("wiki")) {
+            update_after_write(root, rel);
+        }
+
         // Display path stays wiki-relative for the commit subject; the
         // path handed to `commit_paths` is *absolute* so it works when
         // the wiki root is a subdir of a larger git repo (issue #38).
