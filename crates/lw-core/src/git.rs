@@ -553,9 +553,43 @@ pub fn auto_commit(
     Ok(outcome)
 }
 
+/// Returns true if `path_part` (a porcelain-output path fragment) is an
+/// ephemeral `.lw/` artifact that should be silently excluded from the
+/// dirty-elsewhere warning.
+///
+/// Ephemeral paths (issue #97):
+/// - `.lw/search/*`   — Tantivy index files; fully regenerable, never user content.
+/// - `.lw/backlinks/.built` — sentinel written by `rebuild_index`; local-only.
+///
+/// Note: `.lw/backlinks/*.json` sidecar files are NOT ephemeral — they carry
+/// the link-evolution audit trail and are auto-committed alongside the page
+/// (Option A per issue #97). They are intentionally NOT filtered here.
+fn is_lw_ephemeral(path_part: &str) -> bool {
+    // Tantivy index files: anything under .lw/search/
+    // The constant crate::INDEX_DIR == ".lw/search".
+    let index_prefix = format!("{}/", crate::INDEX_DIR);
+    if path_part.starts_with(&index_prefix) || path_part.contains(&format!("/{index_prefix}")) {
+        return true;
+    }
+    // Backlinks built sentinel: .lw/backlinks/.built
+    // Matches regardless of leading directory, to handle wiki-root-in-subdir.
+    // crate::backlinks::BACKLINKS_DIR == ".lw/backlinks"
+    let sentinel_suffix = format!("{}/{}", crate::backlinks::BACKLINKS_DIR, ".built");
+    if path_part == sentinel_suffix || path_part.ends_with(&format!("/{sentinel_suffix}")) {
+        return true;
+    }
+    false
+}
+
 /// Compose the dirty-elsewhere warning, if any. Compares
 /// `git status --porcelain` against the supplied paths and returns
 /// `Some(message)` when there are dirty files that aren't being committed.
+///
+/// Ephemeral `.lw/` artifacts (Tantivy index files under `.lw/search/` and
+/// the backlinks built sentinel `.lw/backlinks/.built`) are silently excluded
+/// from the warning — see `is_lw_ephemeral`. This covers both fresh vaults
+/// (where `.gitignore` excludes them) and existing vaults that may have
+/// accidentally tracked these paths before the fix.
 fn dirty_elsewhere_warning(repo_root: &Path, paths: &[PathBuf]) -> Option<String> {
     let toplevel = resolve_toplevel(repo_root).ok()?;
     // `--untracked-files=all` forces individual file listings; without it
@@ -588,6 +622,10 @@ fn dirty_elsewhere_warning(repo_root: &Path, paths: &[PathBuf]) -> Option<String
         // `XY <old> -> <new>`). Strip the 2 status chars + 1 space.
         let path_part = line.get(3..).unwrap_or("").trim();
         if path_part.is_empty() {
+            continue;
+        }
+        // Silently skip ephemeral .lw/ artifacts (Tantivy index, built sentinel).
+        if is_lw_ephemeral(path_part) {
             continue;
         }
         // Naive check: skip if any of our supplied paths matches the trailing
@@ -1200,8 +1238,7 @@ mod tests {
         fs::create_dir_all(root.join("wiki/tools")).unwrap();
         fs::write(root.join("wiki/tools/bar.md"), "page").unwrap();
 
-        let warning =
-            dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/bar.md")]);
+        let warning = dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/bar.md")]);
         assert!(
             warning.is_none(),
             ".lw/search/* must not trigger dirty-warning; got: {warning:?}"
@@ -1236,8 +1273,7 @@ mod tests {
         fs::create_dir_all(root.join("wiki/tools")).unwrap();
         fs::write(root.join("wiki/tools/baz.md"), "page").unwrap();
 
-        let warning =
-            dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/baz.md")]);
+        let warning = dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/baz.md")]);
         assert!(
             warning.is_none(),
             ".lw/backlinks/.built must not trigger dirty-warning; got: {warning:?}"
@@ -1278,8 +1314,7 @@ mod tests {
         fs::create_dir_all(root.join("wiki/tools")).unwrap();
         fs::write(root.join("wiki/tools/qux.md"), "page").unwrap();
 
-        let warning =
-            dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/qux.md")]);
+        let warning = dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/qux.md")]);
         let w = warning.expect("warning expected for wiki/other-page.md");
         assert!(
             w.contains("other-page.md"),
