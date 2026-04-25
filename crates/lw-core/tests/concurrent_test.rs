@@ -12,6 +12,7 @@ use lw_core::link::{find_broken_links, resolve_link};
 use lw_core::search::{SearchQuery, Searcher};
 use lw_core::tag::Taxonomy;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 /// N independent wikis running full CRUD in parallel threads.
@@ -200,7 +201,11 @@ fn concurrent_read_write() {
     let root = wiki.root().to_path_buf();
     let wiki_dir = wiki.wiki_dir();
 
-    // Writer thread: write 50 pages sequentially
+    // Flag shared between writer and reader: set to true when writer is done.
+    let done = Arc::new(AtomicBool::new(false));
+    let done_reader = Arc::clone(&done);
+
+    // Writer thread: write 50 pages sequentially via atomic_write.
     let writer_root = root.clone();
     let writer = thread::spawn(move || {
         for i in 0..50 {
@@ -215,13 +220,16 @@ fn concurrent_read_write() {
                 .join(format!("page-{i}.md"));
             lw_core::fs::write_page(&abs, &page).unwrap();
         }
+        done.store(true, Ordering::Release);
     });
 
-    // Reader thread: continuously list pages (may see partial state — that's OK)
+    // Reader thread: list pages until the writer signals completion.
+    // Using a flag instead of a fixed iteration count makes the test
+    // immune to write latency changes (e.g. atomic writes with fsync).
     let reader_dir = wiki_dir.clone();
     let reader = thread::spawn(move || {
         let mut max_seen = 0;
-        for _ in 0..100 {
+        while !done_reader.load(Ordering::Acquire) || max_seen == 0 {
             if let Ok(pages) = list_pages(&reader_dir) {
                 max_seen = max_seen.max(pages.len());
             }

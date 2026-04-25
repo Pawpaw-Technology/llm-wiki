@@ -1,4 +1,4 @@
-use lw_core::fs::{validate_wiki_path, write_page};
+use lw_core::fs::{atomic_write, validate_wiki_path, write_page};
 use lw_core::page::Page;
 use lw_core::section;
 use std::io::Read;
@@ -86,7 +86,7 @@ fn run_section_op(
     match op(body) {
         Some(r) => {
             let output = format!("{}{}", frontmatter, r.body);
-            std::fs::write(abs_path, output)?;
+            atomic_write(abs_path, output.as_bytes())?;
             Ok(Some(r))
         }
         None => Ok(None),
