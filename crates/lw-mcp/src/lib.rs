@@ -1910,4 +1910,158 @@ mod tests {
             "unknown target should error: {resp}"
         );
     }
+
+    /// Regression: review feedback on PR #94. The `append_section` /
+    /// `upsert_section` paths in `wiki_write` previously skipped
+    /// `backlinks::update_for_page`, so adding a `[[wikilink]]` via a
+    /// section write left the backlink index stale. To avoid masking the
+    /// bug behind a full `ensure_index` rebuild on the subsequent
+    /// `wiki_backlinks` call, we pre-seed an unrelated sidecar so
+    /// `.lw/backlinks/` is non-empty (and thus `ensure_index` skips the
+    /// rebuild — see also the `.built` sentinel test in lw-core).
+    #[tokio::test]
+    async fn wiki_write_append_section_updates_backlinks() {
+        let (tmp, server) = spawn_server();
+
+        // Two pages: target (has no inbound links yet) and source (will
+        // gain a [[target]] link via append_section).
+        let target = WikiWriteArgs {
+            path: "tools/append-target.md".to_string(),
+            content: "---\ntitle: Append Target\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(target));
+
+        let source = WikiWriteArgs {
+            path: "tools/append-source.md".to_string(),
+            content: "---\ntitle: Append Source\ntags: [t]\n---\n\nIntro paragraph.\n\n## Notes\n\nSome notes.\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(source));
+
+        // Pre-seed an unrelated sidecar to keep .lw/backlinks/ non-empty.
+        // Without this, `ensure_index` on the wiki_backlinks call would
+        // run a full rebuild and mask the bug because the rebuild walk
+        // would re-discover the new wikilink anyway.
+        let backlinks_dir = tmp.path().join(lw_core::backlinks::BACKLINKS_DIR);
+        std::fs::create_dir_all(&backlinks_dir).unwrap();
+        std::fs::write(
+            backlinks_dir.join("__sentinel__.json"),
+            br#"{"target":"__sentinel__","sources":[]}"#,
+        )
+        .unwrap();
+
+        // Now append a [[append-target]] reference via append_section.
+        let append = WikiWriteArgs {
+            path: "tools/append-source.md".to_string(),
+            content: "Cross-reference [[append-target]] for context.".to_string(),
+            mode: "append_section".to_string(),
+            section: Some("Notes".to_string()),
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(append));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "append failed: {resp}");
+
+        // Query the backlinks for the target — it should now include the source.
+        let q = WikiBacklinksArgs {
+            path: "append-target".to_string(),
+        };
+        let resp = server.wiki_backlinks(Parameters(q));
+        let v = parse(&resp);
+        let backlinks = v["backlinks"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected backlinks array, got: {resp}"));
+        assert_eq!(
+            backlinks.len(),
+            1,
+            "append_section must update backlinks index; got: {resp}"
+        );
+        assert_eq!(
+            backlinks[0]["source"].as_str(),
+            Some("wiki/tools/append-source.md"),
+            "wrong source path: {resp}"
+        );
+    }
+
+    /// Regression: same review feedback as above, but for `upsert_section`.
+    #[tokio::test]
+    async fn wiki_write_upsert_section_updates_backlinks() {
+        let (tmp, server) = spawn_server();
+
+        let target = WikiWriteArgs {
+            path: "tools/upsert-target.md".to_string(),
+            content: "---\ntitle: Upsert Target\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(target));
+
+        let source = WikiWriteArgs {
+            path: "tools/upsert-source.md".to_string(),
+            content: "---\ntitle: Upsert Source\ntags: [t]\n---\n\nIntro.\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(source));
+
+        // Pre-seed an unrelated sidecar so ensure_index doesn't rebuild.
+        let backlinks_dir = tmp.path().join(lw_core::backlinks::BACKLINKS_DIR);
+        std::fs::create_dir_all(&backlinks_dir).unwrap();
+        std::fs::write(
+            backlinks_dir.join("__sentinel__.json"),
+            br#"{"target":"__sentinel__","sources":[]}"#,
+        )
+        .unwrap();
+
+        // upsert a Related section that adds a [[upsert-target]] link.
+        let upsert = WikiWriteArgs {
+            path: "tools/upsert-source.md".to_string(),
+            content: "See [[upsert-target]] for details.".to_string(),
+            mode: "upsert_section".to_string(),
+            section: Some("Related".to_string()),
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(upsert));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "upsert failed: {resp}");
+
+        let q = WikiBacklinksArgs {
+            path: "upsert-target".to_string(),
+        };
+        let resp = server.wiki_backlinks(Parameters(q));
+        let v = parse(&resp);
+        let backlinks = v["backlinks"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected backlinks array, got: {resp}"));
+        assert_eq!(
+            backlinks.len(),
+            1,
+            "upsert_section must update backlinks index; got: {resp}"
+        );
+    }
 }

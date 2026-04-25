@@ -271,3 +271,44 @@ fn ensure_index_builds_when_missing() {
     assert!(dir.exists(), "ensure_index must create dir");
     assert!(query(wiki.root(), "t").unwrap().is_some());
 }
+
+/// Regression: review feedback on PR #94. A wiki with no inter-page
+/// `[[wikilinks]]` writes no sidecar files, so the old "directory
+/// non-empty?" heuristic always considered the index unbuilt and
+/// triggered a full O(n_pages) rebuild on every call. The fix adds a
+/// `.built` sentinel file that `rebuild_index` writes on completion,
+/// so subsequent `ensure_index` calls early-return.
+///
+/// Detection strategy: after the first `ensure_index` builds (or no-ops)
+/// the index, add a brand-new page with a `[[wikilink]]`. Then call
+/// `ensure_index` again. If it rebuilds, the new link will produce a
+/// sidecar; if it correctly short-circuits, no sidecar should appear.
+#[test]
+fn ensure_index_skips_rebuild_when_already_built() {
+    let wiki = TestWiki::new();
+    // Phase 1: a single orphan page with NO outbound wikilinks. After
+    // ensure_index, the index is "built" but no sidecars exist.
+    let orphan = make_page("Orphan", &["tools"], "normal", "no links here");
+    wiki.write_page("tools/orphan.md", &orphan);
+
+    ensure_index(wiki.root()).expect("first ensure ok");
+    let dir = wiki.root().join(BACKLINKS_DIR);
+    assert!(dir.exists(), "ensure_index must create the directory");
+
+    // Phase 2: add a new page that links to the orphan AFTER the index
+    // was built. A correct ensure_index implementation must NOT pick
+    // this up — only an incremental update_for_page (or an explicit
+    // rebuild_index) should add this link to the sidecars. If
+    // ensure_index re-walks the tree on every call, the new sidecar
+    // will be created, exposing the regression.
+    let linker = make_page("Linker", &["tools"], "normal", "See [[orphan]] above.");
+    wiki.write_page("tools/linker.md", &linker);
+
+    ensure_index(wiki.root()).expect("second ensure ok");
+
+    let sidecar = sidecar_path(wiki.root(), "orphan");
+    assert!(
+        !sidecar.exists(),
+        "ensure_index must short-circuit when already built — found unexpected sidecar at {sidecar:?}; this means a full rebuild ran"
+    );
+}
