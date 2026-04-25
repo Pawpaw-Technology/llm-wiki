@@ -2,10 +2,23 @@ use crate::{Result, WikiError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Per-category configuration block (`[categories.<name>]` in schema.toml).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CategoryConfig {
+    pub review_days: Option<u32>,
+    #[serde(default)]
+    pub required_fields: Vec<String>,
+    #[serde(default)]
+    pub template: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiSchema {
     pub wiki: WikiConfig,
     pub tags: TagsConfig,
+    /// Stub: always empty — not loaded from TOML until GREEN commit.
+    #[serde(skip)]
+    pub categories: HashMap<String, CategoryConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +56,12 @@ impl WikiSchema {
         dirs.push("_uncategorized".to_string());
         dirs
     }
+
+    /// Return the [`CategoryConfig`] for a named category, or `None` if not configured.
+    /// Stub: always returns `None` until GREEN commit.
+    pub fn category_config(&self, _name: &str) -> Option<&CategoryConfig> {
+        None
+    }
 }
 
 impl Default for WikiSchema {
@@ -70,6 +89,7 @@ impl Default for WikiSchema {
                     ("ops".into(), "normal".into()),
                 ]),
             },
+            categories: HashMap::new(),
         }
     }
 }
