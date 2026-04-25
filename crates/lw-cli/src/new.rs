@@ -3,7 +3,7 @@ use crate::output::Format;
 use lw_core::fs::{NewPageRequest, load_schema, new_page};
 use lw_core::git::CommitAction;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Serialize)]
 struct NewPageOutput {
@@ -74,15 +74,12 @@ pub fn run(
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| abs_path.to_string_lossy().into_owned());
 
-    // Auto-commit (issue #38). The slug for the commit subject is the
-    // wiki-relative path, e.g. "wiki/tools/foo.md".
-    let rel_for_commit: PathBuf = match abs_path.strip_prefix(root) {
-        Ok(p) => p.to_path_buf(),
-        Err(_) => abs_path.clone(),
-    };
+    // Auto-commit (issue #38). Hand `commit_paths` the *absolute* page
+    // path so it can re-resolve against the actual git toplevel — the
+    // wiki root is allowed to be a subdir of a larger repo.
     run_auto_commit(
         root,
-        &[rel_for_commit],
+        std::slice::from_ref(&abs_path),
         CommitAction::Create,
         &display_path,
         AutoCommitFlags {

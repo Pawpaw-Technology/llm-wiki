@@ -4,7 +4,7 @@ use lw_core::git::CommitAction;
 use lw_core::page::Page;
 use lw_core::section;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Auto-commit options forwarded from the CLI parser.
 pub struct CommitOpts {
@@ -94,14 +94,16 @@ pub fn run(
     // Auto-commit only when something actually hit disk. An empty append
     // is a no-op for both the file and git.
     if wrote_anything {
-        let rel_for_commit: PathBuf = match abs_path.strip_prefix(root) {
-            Ok(p) => p.to_path_buf(),
-            Err(_) => abs_path.clone(),
-        };
-        let display_path = rel_for_commit.to_string_lossy().into_owned();
+        // Display path stays wiki-relative for the commit subject; the
+        // path handed to `commit_paths` is *absolute* so it works when
+        // the wiki root is a subdir of a larger git repo (issue #38).
+        let display_path = abs_path
+            .strip_prefix(root)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| abs_path.to_string_lossy().into_owned());
         run_auto_commit(
             root,
-            std::slice::from_ref(&rel_for_commit),
+            std::slice::from_ref(&abs_path),
             action,
             &display_path,
             AutoCommitFlags {

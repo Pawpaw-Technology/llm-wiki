@@ -6,7 +6,7 @@ use lw_core::ingest::{extract_h1, ingest_source, slug_from_title_or_h1};
 use lw_core::page::slugify;
 use serde::Serialize;
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Serialize)]
 struct IngestOutput {
@@ -179,17 +179,13 @@ pub fn run(
         result.raw_path.file_name().unwrap().to_string_lossy()
     );
 
-    // Auto-commit (issue #38). The committed path is the raw file we
-    // just staged — `result.raw_path` is absolute, strip the wiki root
-    // for repo-relative form. The URL origin (if any) becomes the
-    // `source:` line in the commit body.
-    let rel_for_commit: PathBuf = match result.raw_path.strip_prefix(root) {
-        Ok(p) => p.to_path_buf(),
-        Err(_) => result.raw_path.clone(),
-    };
+    // Auto-commit (issue #38). Hand `commit_paths` the absolute raw
+    // path so it can re-resolve against the actual git toplevel — the
+    // wiki root is allowed to be a subdir of a larger repo. The URL
+    // origin (if any) becomes the `source:` line in the commit body.
     run_auto_commit(
         root,
-        &[rel_for_commit],
+        std::slice::from_ref(&result.raw_path),
         CommitAction::Ingest,
         &raw_ref,
         AutoCommitFlags {
