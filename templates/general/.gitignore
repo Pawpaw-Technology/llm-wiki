@@ -1,0 +1,4 @@
+# lw tooling — regenerable artifacts (issue #97)
+# These are local-only; re-generated automatically on demand.
+.lw/search/
+.lw/backlinks/.built
