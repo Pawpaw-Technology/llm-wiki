@@ -1,5 +1,6 @@
 use lw_core::fs::{
-    category_from_path, discover_wiki_root, init_wiki, list_pages, read_page, write_page,
+    atomic_write, category_from_path, discover_wiki_root, init_wiki, list_pages, read_page,
+    write_page,
 };
 use lw_core::page::Page;
 use lw_core::schema::WikiSchema;
@@ -151,4 +152,106 @@ fn discover_wiki_root_not_found() {
     let tmp = TempDir::new().unwrap();
     // No wiki initialized here
     assert!(discover_wiki_root(tmp.path()).is_none());
+}
+
+/// Test A: write_page leaves no *.tmp file behind in the page directory after a
+/// successful write.
+#[test]
+fn write_page_leaves_no_tmp_file() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_wiki(root, &WikiSchema::default()).unwrap();
+
+    let page = Page {
+        title: "Atomic Test".to_string(),
+        tags: vec![],
+        decay: None,
+        sources: vec![],
+        author: None,
+        generator: None,
+        related: None,
+        body: "content\n".to_string(),
+    };
+    let path = root.join("wiki/architecture/atomic-test.md");
+    write_page(&path, &page).unwrap();
+
+    // The page must exist and be readable.
+    assert!(path.exists());
+
+    // No .tmp files should be left behind in the parent directory.
+    let parent = path.parent().unwrap();
+    let leftover_tmps: Vec<_> = std::fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "tmp"))
+        .collect();
+    assert!(
+        leftover_tmps.is_empty(),
+        "write_page left behind tmp files: {leftover_tmps:?}"
+    );
+}
+
+/// Test B (Unix-only): A pre-existing symlink at a predictable temp path must NOT
+/// be followed — the victim file pointed to by the symlink must remain intact.
+#[cfg(unix)]
+#[test]
+fn write_page_does_not_follow_victim_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_wiki(root, &WikiSchema::default()).unwrap();
+
+    let page_dir = root.join("wiki/architecture");
+    let page_path = page_dir.join("test.md");
+
+    // Create a victim file that an attacker might point to via a pre-placed symlink.
+    let victim_path = tmp.path().join("victim.txt");
+    std::fs::write(&victim_path, b"SECRET CONTENT").unwrap();
+
+    // Create a symlink at the predictable temp path the OLD code would have used.
+    // Old code did `std::fs::write(path, body)` directly, so the victim was the
+    // page itself. With the new tempfile-based helper the temp file gets a random
+    // name inside the parent dir. To ensure we exercise the "no predictable name"
+    // property, we place a symlink at "test.md.tmp" (the historically common
+    // predictable temp name pattern) pointing at the victim.
+    let fake_tmp = page_dir.join("test.md.tmp");
+    symlink(&victim_path, &fake_tmp).unwrap();
+
+    // Write the page — this must succeed without clobbering the victim.
+    let page = Page {
+        title: "Symlink Safe".to_string(),
+        tags: vec![],
+        decay: None,
+        sources: vec![],
+        author: None,
+        generator: None,
+        related: None,
+        body: "safe\n".to_string(),
+    };
+    write_page(&page_path, &page).unwrap();
+
+    // The victim file must be untouched.
+    let victim_contents = std::fs::read(&victim_path).unwrap();
+    assert_eq!(
+        victim_contents, b"SECRET CONTENT",
+        "victim file was clobbered by write_page"
+    );
+
+    // The page itself should have been written correctly.
+    assert!(page_path.exists());
+
+    // The fake-tmp symlink should still be intact (we did not remove it).
+    assert!(fake_tmp.exists() || std::fs::symlink_metadata(&fake_tmp).is_ok());
+}
+
+/// Test C: atomic_write (the low-level helper) round-trips bytes correctly.
+#[test]
+fn atomic_write_round_trips_bytes() {
+    let tmp = TempDir::new().unwrap();
+    let dest = tmp.path().join("output.md");
+    let body = b"hello atomic world\n";
+    atomic_write(&dest, body).unwrap();
+    let got = std::fs::read(&dest).unwrap();
+    assert_eq!(got, body);
 }
