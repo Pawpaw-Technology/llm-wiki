@@ -1,5 +1,6 @@
 mod config;
 mod doctor;
+mod git_commit;
 mod import;
 mod ingest;
 mod init;
@@ -13,6 +14,7 @@ mod query;
 mod read;
 mod serve;
 mod status;
+mod sync;
 mod templates;
 mod uninstall;
 mod upgrade;
@@ -73,7 +75,7 @@ enum Commands {
 
     /// Ingest source material into the wiki
     #[command(
-        after_help = "Examples:\n  lw ingest paper.pdf --category architecture --raw-type papers\n  lw ingest https://arxiv.org/abs/2405.12345 --category architecture --yes\n  lw ingest notes.md --title \"Meeting Notes\" --category ops --yes\n  cat article.md | lw ingest --stdin --title \"Article\" --yes"
+        after_help = "Examples:\n  lw ingest paper.pdf --category architecture --raw-type papers\n  lw ingest https://arxiv.org/abs/2405.12345 --category architecture --yes\n  lw ingest notes.md --title \"Meeting Notes\" --category ops --yes\n  cat article.md | lw ingest --stdin --title \"Article\" --yes\n  lw ingest paper.pdf --category architecture --yes --no-commit\n  lw ingest paper.pdf --category architecture --yes --push --author \"Alice <a@x>\""
     )]
     Ingest {
         /// Source file path or URL (omit if using --stdin)
@@ -102,6 +104,15 @@ enum Commands {
         /// Output format (human or json)
         #[arg(short = 'o', long, default_value = "human")]
         output_format: Format,
+        /// Skip the auto-commit that normally follows a successful ingest
+        #[arg(long)]
+        no_commit: bool,
+        /// Also `git push` after committing
+        #[arg(long)]
+        push: bool,
+        /// Override commit author as `"Name <email>"`
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Import batch sources into the wiki
@@ -172,7 +183,7 @@ enum Commands {
 
     /// Create a new wiki page with schema-enforced frontmatter and body template
     #[command(
-        after_help = "Examples:\n  lw new tools/comrak-ast-parser --title \"Comrak AST Parser\" --tags rust,markdown,parsing\n  lw new tools/foo --title \"Foo\" --tags a,b --format json\n  lw new architecture/transformer --title \"Transformer\" --tags ml,architecture --author alice"
+        after_help = "Examples:\n  lw new tools/comrak-ast-parser --title \"Comrak AST Parser\" --tags rust,markdown,parsing\n  lw new tools/foo --title \"Foo\" --tags a,b --format json\n  lw new architecture/transformer --title \"Transformer\" --tags ml,architecture --author alice\n  lw new tools/foo --title Foo --tags a,b --no-commit\n  lw new tools/foo --title Foo --tags a,b --push --author \"Alice <a@x>\""
     )]
     New {
         /// Page path as \"<category>/<slug>\" (e.g. tools/comrak-ast-parser)
@@ -183,17 +194,28 @@ enum Commands {
         /// Tags (comma-separated, e.g. rust,markdown,parsing)
         #[arg(long)]
         tags: Option<String>,
-        /// Author name
+        /// Author. Used both as the page's frontmatter `author` and as the
+        /// commit author when auto-committing. Use `"Name <email>"` form
+        /// to set the commit author cleanly.
         #[arg(long)]
         author: Option<String>,
         /// Output format
         #[arg(short = 'o', long, default_value = "human")]
         format: Format,
+        /// Skip the auto-commit that normally follows page creation
+        #[arg(long)]
+        no_commit: bool,
+        /// Also `git push` after committing
+        #[arg(long)]
+        push: bool,
+        /// Optional `source:` line recorded in the commit body
+        #[arg(long)]
+        source: Option<String>,
     },
 
     /// Write or update a wiki page (overwrite, append to section, or upsert section)
     #[command(
-        after_help = "Examples:\n  echo 'full content' | lw write tools/page.md\n  lw write tools/page.md --mode append --section References --content '- [[link]]'\n  echo 'new docs' | lw write tools/page.md --mode upsert --section Usage"
+        after_help = "Examples:\n  echo 'full content' | lw write tools/page.md\n  lw write tools/page.md --mode append --section References --content '- [[link]]'\n  echo 'new docs' | lw write tools/page.md --mode upsert --section Usage\n  lw write tools/page.md --mode overwrite --content '...' --no-commit\n  lw write tools/page.md --mode append --section Notes --content x --push"
     )]
     Write {
         /// Wiki-relative path (e.g. tools/page.md)
@@ -207,6 +229,28 @@ enum Commands {
         /// Content to write (alternative to stdin)
         #[arg(long)]
         content: Option<String>,
+        /// Skip the auto-commit that normally follows a successful write
+        #[arg(long)]
+        no_commit: bool,
+        /// Also `git push` after committing
+        #[arg(long)]
+        push: bool,
+        /// Override commit author as `"Name <email>"`
+        #[arg(long)]
+        author: Option<String>,
+        /// Optional `source:` line recorded in the commit body
+        #[arg(long)]
+        source: Option<String>,
+    },
+
+    /// Sync the vault: pull --rebase from origin, then push
+    #[command(
+        after_help = "Examples:\n  lw sync\n  lw sync --force      # uses --force-with-lease (safer than --force)"
+    )]
+    Sync {
+        /// Force-push with lease (after the rebase)
+        #[arg(long)]
+        force: bool,
     },
 
     /// Manage registered wiki workspaces (Obsidian-style vaults)
@@ -383,6 +427,9 @@ fn main() {
             yes,
             dry_run,
             output_format,
+            no_commit,
+            push,
+            author,
         } => match resolve_root(cli.root) {
             Ok(root) => ingest::run(
                 &root,
@@ -395,6 +442,11 @@ fn main() {
                 yes,
                 dry_run,
                 &output_format,
+                ingest::CommitOpts {
+                    no_commit,
+                    push,
+                    author,
+                },
             ),
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -457,8 +509,23 @@ fn main() {
             tags,
             author,
             format,
+            no_commit,
+            push,
+            source,
         } => match resolve_root(cli.root) {
-            Ok(root) => new::run(&root, &path, title, tags, author, &format),
+            Ok(root) => new::run(
+                &root,
+                &path,
+                title,
+                tags,
+                author,
+                &format,
+                new::CommitOpts {
+                    no_commit,
+                    push,
+                    source,
+                },
+            ),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
@@ -469,13 +536,37 @@ fn main() {
             mode,
             section,
             content,
+            no_commit,
+            push,
+            author,
+            source,
         } => match resolve_root(cli.root) {
             Ok(root) => {
                 // Detect if stdin has data (is not a terminal)
                 use std::io::IsTerminal;
                 let stdin_available = !std::io::stdin().is_terminal();
-                write::run(&root, &path, &mode, &section, &content, stdin_available)
+                write::run(
+                    &root,
+                    &path,
+                    &mode,
+                    &section,
+                    &content,
+                    stdin_available,
+                    write::CommitOpts {
+                        no_commit,
+                        push,
+                        author,
+                        source,
+                    },
+                )
             }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Sync { force } => match resolve_root(cli.root) {
+            Ok(root) => sync::run(&root, force),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);

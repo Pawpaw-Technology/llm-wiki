@@ -1,5 +1,7 @@
+use crate::git_commit::{AutoCommitFlags, run_auto_commit};
 use crate::output::Format;
 use lw_core::fs::load_schema;
+use lw_core::git::CommitAction;
 use lw_core::ingest::{extract_h1, ingest_source, slug_from_title_or_h1};
 use lw_core::page::slugify;
 use serde::Serialize;
@@ -15,6 +17,13 @@ struct IngestOutput {
     dry_run: bool,
 }
 
+/// Auto-commit options forwarded from the CLI parser.
+pub struct CommitOpts {
+    pub no_commit: bool,
+    pub push: bool,
+    pub author: Option<String>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     root: &Path,
@@ -27,6 +36,7 @@ pub fn run(
     yes: bool,
     dry_run: bool,
     output_format: &Format,
+    commit_opts: CommitOpts,
 ) -> anyhow::Result<()> {
     let schema = load_schema(root)?;
 
@@ -168,6 +178,23 @@ pub fn run(
         raw_subdir,
         result.raw_path.file_name().unwrap().to_string_lossy()
     );
+
+    // Auto-commit (issue #38). Hand `commit_paths` the absolute raw
+    // path so it can re-resolve against the actual git toplevel — the
+    // wiki root is allowed to be a subdir of a larger repo. The URL
+    // origin (if any) becomes the `source:` line in the commit body.
+    run_auto_commit(
+        root,
+        std::slice::from_ref(&result.raw_path),
+        CommitAction::Ingest,
+        &raw_ref,
+        AutoCommitFlags {
+            no_commit: commit_opts.no_commit,
+            push: commit_opts.push,
+            author: commit_opts.author.as_deref(),
+            source: url_origin.as_deref(),
+        },
+    )?;
 
     let output = IngestOutput {
         path: raw_ref,
