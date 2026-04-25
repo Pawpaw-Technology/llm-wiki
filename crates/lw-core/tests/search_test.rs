@@ -495,3 +495,80 @@ fn is_empty_reflects_persisted_index_across_instances() {
         "reopened index must see previously-persisted docs"
     );
 }
+
+// ---------------------------------------------------------------------------
+// External-commit visibility (issue #65)
+//
+// A long-lived TantivySearcher with ReloadPolicy::Manual must call
+// reader.reload() before search() and is_empty() so it sees commits made
+// by other TantivySearcher instances (or other processes) without restart.
+// ---------------------------------------------------------------------------
+
+/// Criterion 1 + 3: searcher A is constructed before searcher B writes any
+/// docs. After B commits, A's search() must return the new document.
+///
+/// This test FAILS on the unpatched code because A's reader snapshot was
+/// taken at construction time and ReloadPolicy::Manual means it will never
+/// refresh unless reload() is called explicitly.
+#[test]
+fn search_sees_external_commit_without_restart() {
+    let tmp = TempDir::new().unwrap();
+
+    // Searcher A: constructed on an empty index — no docs yet.
+    let searcher_a = TantivySearcher::new(tmp.path()).unwrap();
+
+    // Searcher B: writes and commits a document to the same index.
+    let searcher_b = TantivySearcher::new(tmp.path()).unwrap();
+    let (path, page) = make_page(
+        "External Commit",
+        &["reload"],
+        "This document was committed by an external searcher instance.",
+    );
+    searcher_b.index_page(&path, &page).unwrap();
+    searcher_b.commit().unwrap();
+
+    // Searcher A must see the document that B committed — without being
+    // reconstructed. This requires search() to call reader.reload() first.
+    let query = SearchQuery {
+        text: Some("external searcher".into()),
+        tags: vec![],
+        category: None,
+        limit: 10,
+    };
+    let results = searcher_a.search(&query).unwrap();
+    assert_eq!(
+        results.total, 1,
+        "searcher A must see docs committed by searcher B without restart \
+         (requires reader.reload() in search())"
+    );
+    assert_eq!(results.hits[0].title, "External Commit");
+}
+
+/// Criterion 2: is_empty() must reload before checking num_docs(), so a
+/// long-lived searcher that was constructed when the index was empty sees
+/// the current on-disk state after another instance has written to it.
+#[test]
+fn is_empty_sees_external_commit_without_restart() {
+    let tmp = TempDir::new().unwrap();
+
+    // Searcher A: constructed on an empty index.
+    let searcher_a = TantivySearcher::new(tmp.path()).unwrap();
+    assert!(
+        searcher_a.is_empty(),
+        "fresh index must be empty before any writes"
+    );
+
+    // Searcher B: writes and commits a document.
+    let searcher_b = TantivySearcher::new(tmp.path()).unwrap();
+    let (path, page) = make_page("IsEmpty Reload", &[], "Body for is_empty reload test.");
+    searcher_b.index_page(&path, &page).unwrap();
+    searcher_b.commit().unwrap();
+
+    // Searcher A's is_empty() must return false now — requires reader.reload()
+    // inside is_empty() before the num_docs() check.
+    assert!(
+        !searcher_a.is_empty(),
+        "is_empty() must return false after an external commit \
+         (requires reader.reload() inside is_empty())"
+    );
+}
