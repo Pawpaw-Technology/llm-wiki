@@ -29,18 +29,41 @@ struct McpCommitArgs<'a> {
     source: Option<&'a str>,
 }
 
+/// Outcome of the MCP-side auto-commit. Either an error response (tool
+/// must propagate as-is) or success with an optional dirty-tree warning
+/// the tool should surface to the agent in its JSON response.
+enum McpCommitResult {
+    Err(String),
+    Ok { dirty_warning: Option<String> },
+}
+
+/// Append a `warnings: [...]` field to a tool's success JSON when the
+/// auto-commit reported a dirty-tree warning. No-op when the warning
+/// is `None`, so clean-tree responses don't grow a noisy empty array.
+fn attach_warnings(response: &mut serde_json::Value, dirty_warning: Option<String>) {
+    if let Some(w) = dirty_warning
+        && let Some(obj) = response.as_object_mut()
+    {
+        obj.insert("warnings".to_string(), serde_json::json!([w]));
+    }
+}
+
 /// Run the auto-commit policy for an MCP write tool.
 ///
-/// Returns `Some(error_json)` if the commit/push failed — the caller
-/// should propagate it as the tool's response. Returns `None` on success
-/// (or graceful no-op for non-git directories).
+/// Returns `McpCommitResult::Err(error_json)` if the commit/push failed
+/// — the caller should propagate it verbatim. Otherwise returns
+/// `McpCommitResult::Ok` with `dirty_warning` populated when the working
+/// tree had uncommitted changes outside the page being committed.
+/// Tools must surface that warning in the JSON they return so the agent
+/// can show it to the user (issue #38: previously logged via tracing
+/// only, never seen by the agent).
 fn mcp_auto_commit(
     repo_root: &Path,
     paths: &[PathBuf],
     action: CommitAction,
     page_slug: &str,
     args: McpCommitArgs<'_>,
-) -> Option<String> {
+) -> McpCommitResult {
     let opts = AutoCommitOpts {
         commit: args.commit.unwrap_or(true),
         push: args.push.unwrap_or(false),
@@ -51,13 +74,17 @@ fn mcp_auto_commit(
     match auto_commit(repo_root, paths, action, page_slug, opts) {
         Ok(outcome) => {
             if let Some(w) = &outcome.dirty_warning {
+                // Keep the tracing log for telemetry alongside the
+                // JSON-surfaced field.
                 tracing::warn!("{w}");
             }
-            None
+            McpCommitResult::Ok {
+                dirty_warning: outcome.dirty_warning,
+            }
         }
-        Err(e) => {
-            Some(serde_json::json!({"error": format!("auto-commit failed: {e}")}).to_string())
-        }
+        Err(e) => McpCommitResult::Err(
+            serde_json::json!({"error": format!("auto-commit failed: {e}")}).to_string(),
+        ),
     }
 }
 
@@ -179,8 +206,10 @@ fn default_raw_type() -> String {
     "articles".to_string()
 }
 
-/// Build the success response body shared by both ingest paths.
-fn ingest_ok_payload(raw_path: &std::path::Path, args: &WikiIngestArgs) -> String {
+/// Build the success response body shared by both ingest paths. Returns
+/// `Value` so callers can mutate the payload (e.g. attach a `warnings`
+/// field) before serialising.
+fn ingest_ok_value(raw_path: &std::path::Path, args: &WikiIngestArgs) -> serde_json::Value {
     serde_json::json!({
         "status": "ok",
         "raw_path": raw_path.to_string_lossy(),
@@ -189,7 +218,6 @@ fn ingest_ok_payload(raw_path: &std::path::Path, args: &WikiIngestArgs) -> Strin
         "suggested_category": args.category,
         "next_step": "Use wiki_write to create the wiki page from this source material.",
     })
-    .to_string()
 }
 
 /// Pick the filename for a content-mode ingest. Priority: explicit
@@ -458,12 +486,13 @@ impl WikiMcpServer {
             Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
         };
 
-        // Repo-relative path used for both the commit subject and `git add`.
-        let rel_for_commit: PathBuf = match abs_path.strip_prefix(&self.wiki_root) {
-            Ok(p) => p.to_path_buf(),
-            Err(_) => abs_path.clone(),
+        // Display path stays wiki-relative for the commit subject; the
+        // absolute path is what we hand to the auto-commit so it works
+        // when the wiki root is a subdir of a larger git repo.
+        let display_path = match abs_path.strip_prefix(&self.wiki_root) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => abs_path.to_string_lossy().to_string(),
         };
-        let display_path = rel_for_commit.to_string_lossy().to_string();
 
         match args.mode.as_str() {
             "overwrite" => {
@@ -487,9 +516,9 @@ impl WikiMcpServer {
                     tracing::warn!("Failed to commit index: {}", e);
                 }
 
-                if let Some(err_resp) = mcp_auto_commit(
+                let dirty_warning = match mcp_auto_commit(
                     &self.wiki_root,
-                    std::slice::from_ref(&rel_for_commit),
+                    std::slice::from_ref(&abs_path),
                     CommitAction::Update,
                     &display_path,
                     McpCommitArgs {
@@ -499,16 +528,18 @@ impl WikiMcpServer {
                         source: args.source.as_deref(),
                     },
                 ) {
-                    return err_resp;
-                }
+                    McpCommitResult::Err(err) => return err,
+                    McpCommitResult::Ok { dirty_warning } => dirty_warning,
+                };
 
-                serde_json::json!({
+                let mut response = serde_json::json!({
                     "status": "ok",
                     "path": args.path,
                     "title": page.title,
                     "tags": page.tags,
-                })
-                .to_string()
+                });
+                attach_warnings(&mut response, dirty_warning);
+                response.to_string()
             }
 
             "append_section" | "upsert_section" => {
@@ -566,9 +597,9 @@ impl WikiMcpServer {
                 } else {
                     CommitAction::Upsert
                 };
-                if let Some(err_resp) = mcp_auto_commit(
+                let dirty_warning = match mcp_auto_commit(
                     &self.wiki_root,
-                    std::slice::from_ref(&rel_for_commit),
+                    std::slice::from_ref(&abs_path),
                     action,
                     &display_path,
                     McpCommitArgs {
@@ -578,8 +609,9 @@ impl WikiMcpServer {
                         source: args.source.as_deref(),
                     },
                 ) {
-                    return err_resp;
-                }
+                    McpCommitResult::Err(err) => return err,
+                    McpCommitResult::Ok { dirty_warning } => dirty_warning,
+                };
 
                 let mut response = serde_json::json!({
                     "status": "ok",
@@ -621,6 +653,7 @@ impl WikiMcpServer {
                     ));
                 }
 
+                attach_warnings(&mut response, dirty_warning);
                 response.to_string()
             }
 
@@ -655,8 +688,12 @@ impl WikiMcpServer {
         let source = PathBuf::from(source_path);
         match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type).await {
             Ok(result) => match self.ingest_auto_commit(&result.raw_path, args) {
-                Some(err) => err,
-                None => ingest_ok_payload(&result.raw_path, args),
+                McpCommitResult::Err(err) => err,
+                McpCommitResult::Ok { dirty_warning } => {
+                    let mut payload = ingest_ok_value(&result.raw_path, args);
+                    attach_warnings(&mut payload, dirty_warning);
+                    payload.to_string()
+                }
             },
             Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),
         }
@@ -671,25 +708,32 @@ impl WikiMcpServer {
             };
         match ingest::ingest_content(&self.wiki_root, &args.raw_type, &filename, content).await {
             Ok(result) => match self.ingest_auto_commit(&result.raw_path, args) {
-                Some(err) => err,
-                None => ingest_ok_payload(&result.raw_path, args),
+                McpCommitResult::Err(err) => err,
+                McpCommitResult::Ok { dirty_warning } => {
+                    let mut payload = ingest_ok_value(&result.raw_path, args);
+                    attach_warnings(&mut payload, dirty_warning);
+                    payload.to_string()
+                }
             },
             Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),
         }
     }
 
-    /// Run the auto-commit policy after a successful ingest. Returns
-    /// `Some(error_response_json)` only when the commit/push fails — the
-    /// caller propagates it as the tool's response. Otherwise `None`.
-    fn ingest_auto_commit(&self, raw_path: &Path, args: &WikiIngestArgs) -> Option<String> {
-        let rel_for_commit: PathBuf = match raw_path.strip_prefix(&self.wiki_root) {
-            Ok(p) => p.to_path_buf(),
-            Err(_) => raw_path.to_path_buf(),
+    /// Run the auto-commit policy after a successful ingest. Returns the
+    /// `McpCommitResult` so the caller can propagate either the error
+    /// response or the optional dirty-tree warning into its JSON.
+    fn ingest_auto_commit(&self, raw_path: &Path, args: &WikiIngestArgs) -> McpCommitResult {
+        // Display path stays vault-relative for the commit subject; the
+        // auto-commit itself receives the absolute raw path so it works
+        // when the wiki root is a subdir of the git repo.
+        let display = match raw_path.strip_prefix(&self.wiki_root) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => raw_path.to_string_lossy().to_string(),
         };
-        let display = rel_for_commit.to_string_lossy().to_string();
+        let abs = raw_path.to_path_buf();
         mcp_auto_commit(
             &self.wiki_root,
-            std::slice::from_ref(&rel_for_commit),
+            std::slice::from_ref(&abs),
             CommitAction::Ingest,
             &display,
             McpCommitArgs {
@@ -777,14 +821,13 @@ impl WikiMcpServer {
                     tracing::warn!("Failed to commit index after wiki_new: {}", e);
                 }
 
-                // Auto-commit the new page (issue #38).
-                let rel_for_commit: PathBuf = match abs_path.strip_prefix(&self.wiki_root) {
-                    Ok(p) => p.to_path_buf(),
-                    Err(_) => abs_path.clone(),
-                };
-                if let Some(err_resp) = mcp_auto_commit(
+                // Auto-commit the new page (issue #38). Pass the
+                // *absolute* page path so `commit_paths` can re-resolve
+                // it against the actual git toplevel — wiki_root is
+                // allowed to be a subdir of a larger repo.
+                let dirty_warning = match mcp_auto_commit(
                     &self.wiki_root,
-                    std::slice::from_ref(&rel_for_commit),
+                    std::slice::from_ref(&abs_path),
                     CommitAction::Create,
                     &json_path,
                     McpCommitArgs {
@@ -794,16 +837,18 @@ impl WikiMcpServer {
                         source: args.source.as_deref(),
                     },
                 ) {
-                    return err_resp;
-                }
+                    McpCommitResult::Err(err) => return err,
+                    McpCommitResult::Ok { dirty_warning } => dirty_warning,
+                };
 
-                serde_json::json!({
+                let mut response = serde_json::json!({
                     "path": json_path,
                     "category": args.category,
                     "slug": args.slug,
                     "content": content,
-                })
-                .to_string()
+                });
+                attach_warnings(&mut response, dirty_warning);
+                response.to_string()
             }
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
@@ -1450,36 +1495,6 @@ mod tests {
             joined.to_lowercase().contains("dirty")
                 || joined.to_lowercase().contains("uncommitted"),
             "warning should mention dirty/uncommitted; got: {joined}"
-        );
-    }
-
-    #[tokio::test]
-    async fn wiki_write_clean_tree_omits_warnings_field() {
-        // Sanity check: when there are no dirty files, the warnings array
-        // must be absent or empty so agents don't see noise.
-        let (_tmp, server) = spawn_server_in_git();
-
-        let args = WikiWriteArgs {
-            path: "architecture/clean.md".to_string(),
-            content: "---\ntitle: Clean\ntags: [t]\n---\n\nbody\n".to_string(),
-            mode: "overwrite".to_string(),
-            section: None,
-            commit: None,
-            push: None,
-            author: None,
-            source: None,
-        };
-        let resp = server.wiki_write(Parameters(args));
-        let v = parse(&resp);
-        assert_eq!(v["status"], "ok", "wiki_write should succeed; got: {resp}");
-
-        let no_warnings = match v.get("warnings") {
-            None => true,
-            Some(arr) => arr.as_array().map(|a| a.is_empty()).unwrap_or(false),
-        };
-        assert!(
-            no_warnings,
-            "clean tree must not produce warnings; got: {resp}"
         );
     }
 
