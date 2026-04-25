@@ -11,6 +11,23 @@ use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, TextAnalyzer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
+/// Bumped whenever the tantivy schema layout changes. The first byte of the
+/// `.schema_version` marker file in the index dir is compared against this
+/// constant; a mismatch (or missing marker on a non-empty dir) triggers a
+/// wipe-and-rebuild on `TantivySearcher::new` so old indexes don't surface as
+/// cryptic tantivy errors.
+///
+/// History:
+/// - `1` — added `status`, `author`, `generator` keyword fields and a fast
+///   `title_keyword` field for sort-by-title (issue #41).
+/// - `2` — dropped the unused `title_kw` FAST field. Sort-by-title is
+///   handled in-memory via `hits.sort_by_key(|h| h.title.to_lowercase())`,
+///   so the FAST field cost schema space without delivering anything.
+///   Bumping the version forces existing indexes to rebuild without the
+///   dead column. (issue #41 review feedback)
+const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION_FILE: &str = ".schema_version";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -33,13 +50,131 @@ pub struct SearchResults {
     pub total: usize,
 }
 
+/// Sort order for search results.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SearchSort {
+    /// Tantivy BM25 relevance, descending (default).
+    #[default]
+    Relevance,
+    /// Page title, ascending (case-insensitive).
+    Title,
+    /// First-commit date from `git log`, newest first.
+    CreatedDesc,
+    /// First-commit date from `git log`, oldest first.
+    CreatedAsc,
+}
+
+impl SearchSort {
+    /// Parse the CLI/MCP-facing string form. Accepts the documented
+    /// `relevance`/`created_desc`/`created_asc`/`title` and returns
+    /// [`WikiError::Internal`] for unknowns so callers (clap value parser,
+    /// MCP handler) can surface a clear error.
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "relevance" => Ok(SearchSort::Relevance),
+            "title" => Ok(SearchSort::Title),
+            "created_desc" => Ok(SearchSort::CreatedDesc),
+            "created_asc" => Ok(SearchSort::CreatedAsc),
+            other => Err(WikiError::Internal(format!(
+                "invalid sort '{other}' (expected: relevance | created_desc | created_asc | title)"
+            ))),
+        }
+    }
+}
+
 /// Parameters for a search query.
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
     pub text: Option<String>,
     pub tags: Vec<String>,
     pub category: Option<String>,
+    /// Filter by frontmatter `status` field (e.g. `draft` / `published`).
+    pub status: Option<String>,
+    /// Filter by frontmatter `author` field.
+    pub author: Option<String>,
+    /// Result ordering. Date-based sorts apply only to the relevance-sorted
+    /// hit set; the actual git-history lookup is the caller's responsibility
+    /// (see `lw_cli::query`).
+    pub sort: SearchSort,
     pub limit: usize,
+}
+
+impl Default for SearchQuery {
+    fn default() -> Self {
+        Self {
+            text: None,
+            tags: Vec::new(),
+            category: None,
+            status: None,
+            author: None,
+            sort: SearchSort::default(),
+            limit: 20,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Post-search helpers (date sort)
+// ---------------------------------------------------------------------------
+
+/// Sort `items` by their first-commit timestamp from `git log`. Generic over
+/// the item type so the CLI can sort `Vec<HitWithFreshness>` and the MCP
+/// handler can sort raw `Vec<SearchHit>` through the same code path.
+///
+/// Why this lives in `lw_core::search` rather than each caller: per the
+/// repo's "All time-related data comes from `git log`" rule, every layer that
+/// surfaces date order must agree on what "newest" means. A duplicated
+/// implementation in MCP (which previously had none — see issue #41 review
+/// feedback) silently let `created_desc` fall through as BM25 order.
+///
+/// Items with no git history (uncommitted files) are placed last regardless
+/// of direction, so unindexed pages are easy to spot rather than hidden at
+/// the top of a `created_desc` list.
+///
+/// `path_of` extracts the wiki-relative path string from each item; the
+/// helper joins it onto `wiki_dir` before calling `git`.
+pub fn sort_by_created<T, F>(items: &mut [T], wiki_dir: &Path, sort: SearchSort, path_of: F)
+where
+    F: Fn(&T) -> &str,
+{
+    use crate::git::page_first_commit_time;
+    use std::cmp::Ordering;
+
+    // Only the date sorts need git lookups; bail early on the others so we
+    // don't pay for a sort that's a no-op or already handled in-memory.
+    let direction = match sort {
+        SearchSort::CreatedDesc | SearchSort::CreatedAsc => sort,
+        _ => return,
+    };
+
+    // Cache per-path lookups: `git log` is slow, and the same path showing
+    // up twice in a result set (shouldn't happen in practice but cheap to
+    // guard against) would otherwise hit `git` twice.
+    let mut times: std::collections::HashMap<String, Option<i64>> =
+        std::collections::HashMap::new();
+    for item in items.iter() {
+        let p = path_of(item);
+        if !times.contains_key(p) {
+            let t = page_first_commit_time(&wiki_dir.join(p)).ok().flatten();
+            times.insert(p.to_string(), t);
+        }
+    }
+
+    items.sort_by(|a, b| {
+        let ta = times.get(path_of(a)).copied().flatten();
+        let tb = times.get(path_of(b)).copied().flatten();
+        match (ta, tb) {
+            (Some(x), Some(y)) => match direction {
+                SearchSort::CreatedDesc => y.cmp(&x),
+                SearchSort::CreatedAsc => x.cmp(&y),
+                _ => Ordering::Equal,
+            },
+            // Pages without git history sort to the end regardless of order.
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -71,11 +206,78 @@ pub struct TantivySearcher {
     f_body: Field,
     f_tags: Field,
     f_category: Field,
+    f_status: Field,
+    f_author: Field,
+    f_generator: Field,
 }
 
 impl TantivySearcher {
+    /// Read the on-disk schema marker. Returns `None` if absent or unparseable
+    /// — both are treated by [`maybe_migrate`] as "rebuild me".
+    fn read_schema_marker(index_dir: &Path) -> Option<u32> {
+        let path = index_dir.join(SCHEMA_VERSION_FILE);
+        let raw = std::fs::read_to_string(&path).ok()?;
+        raw.trim().parse::<u32>().ok()
+    }
+
+    fn write_schema_marker(index_dir: &Path) -> Result<()> {
+        let path = index_dir.join(SCHEMA_VERSION_FILE);
+        std::fs::write(&path, format!("{SCHEMA_VERSION}\n"))
+            .map_err(|e| WikiError::Internal(format!("write schema marker: {e}")))
+    }
+
+    /// If the on-disk index dir was built with an older schema version, wipe
+    /// its contents (but not the directory itself) so [`Index::open_or_create`]
+    /// can build a fresh index. A directory that's empty (no marker, no
+    /// tantivy files) is left alone — the caller's `open_or_create` will set
+    /// it up and we'll write the marker after.
+    ///
+    /// We deliberately keep this logic simple: any non-empty index dir
+    /// without the **current** marker version is reset. Tantivy doesn't
+    /// support online schema migration, and a stale schema would surface
+    /// as a hard-to-diagnose `SchemaError` at first read.
+    fn maybe_migrate(index_dir: &Path) -> Result<()> {
+        if !index_dir.exists() {
+            return Ok(());
+        }
+        let entries: Vec<_> = match std::fs::read_dir(index_dir) {
+            Ok(it) => it.filter_map(|e| e.ok()).collect(),
+            Err(_) => return Ok(()),
+        };
+        // Empty dir: nothing to migrate.
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let marker = Self::read_schema_marker(index_dir);
+        if marker == Some(SCHEMA_VERSION) {
+            return Ok(());
+        }
+        // Either no marker (pre-#41 index) or an older/newer one — wipe.
+        // Remove all entries in the dir (files + subdirs) without unlinking
+        // the dir itself, so callers holding the path still work.
+        for entry in entries {
+            let p = entry.path();
+            let res = if p.is_dir() {
+                std::fs::remove_dir_all(&p)
+            } else {
+                std::fs::remove_file(&p)
+            };
+            if let Err(e) = res {
+                return Err(WikiError::Internal(format!(
+                    "failed to wipe stale index entry {}: {e}",
+                    p.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
     #[tracing::instrument]
     pub fn new(index_dir: &Path) -> Result<Self> {
+        // Wipe any incompatible old-schema index contents up front so the
+        // tantivy `open_or_create` call below sees a clean slate.
+        Self::maybe_migrate(index_dir)?;
+
         // Build text options with jieba tokenizer for CJK support.
         let text_indexing = TextFieldIndexing::default()
             .set_tokenizer("jieba")
@@ -87,13 +289,29 @@ impl TantivySearcher {
         let mut schema_builder = Schema::builder();
         let f_path = schema_builder.add_text_field("path", STRING | STORED);
         let f_title = schema_builder.add_text_field("title", text_options.clone());
+        // Note: a `title_kw` FAST field used to live here for an
+        // `order_by_fast_field` sort-by-title path, but it was never wired
+        // up — `SearchSort::Title` already sorts in memory via
+        // `hits.sort_by_key(|h| h.title.to_lowercase())` on the relevance
+        // top-N. Removed in SCHEMA_VERSION 2 (issue #41 review feedback).
         let f_body = schema_builder.add_text_field("body", text_options);
         let f_tags = schema_builder.add_text_field("tags", STRING | STORED);
         let f_category = schema_builder.add_text_field("category", STRING | STORED);
+        let f_status = schema_builder.add_text_field("status", STRING | STORED);
+        let f_author = schema_builder.add_text_field("author", STRING | STORED);
+        let f_generator = schema_builder.add_text_field("generator", STRING | STORED);
         let schema = schema_builder.build();
 
         let index =
             Index::open_or_create(tantivy::directory::MmapDirectory::open(index_dir)?, schema)?;
+
+        // Persist the marker so future opens of this dir know which schema it
+        // was built against. Best-effort: a write failure shouldn't abort the
+        // open (the user may not have write permission for some reason), but
+        // we'd rather know about it.
+        if let Err(e) = Self::write_schema_marker(index_dir) {
+            tracing::warn!("failed to write schema version marker: {e}");
+        }
 
         // Register jieba tokenizer with lowercase filter for CJK + English support.
         let jieba_analyzer = TextAnalyzer::builder(tantivy_jieba::JiebaTokenizer::default())
@@ -116,6 +334,9 @@ impl TantivySearcher {
             f_body,
             f_tags,
             f_category,
+            f_status,
+            f_author,
+            f_generator,
         })
     }
 
@@ -151,6 +372,15 @@ impl TantivySearcher {
             doc.add_text(self.f_tags, tag);
         }
         doc.add_text(self.f_category, &category);
+        if let Some(s) = &page.status {
+            doc.add_text(self.f_status, s);
+        }
+        if let Some(a) = &page.author {
+            doc.add_text(self.f_author, a);
+        }
+        if let Some(g) = &page.generator {
+            doc.add_text(self.f_generator, g);
+        }
         doc
     }
 
@@ -270,8 +500,12 @@ impl Searcher for TantivySearcher {
             }
         }
 
-        // Tag filters — each required tag must be present.
-        for tag in &query.tags {
+        // Tag filters — each required tag must be present (AND). Empty
+        // strings are dropped for the same reason as the other filters: a
+        // term built from "" matches nothing, which would silently turn a
+        // single accidental empty entry in the tags vec into a global
+        // "zero results".
+        for tag in query.tags.iter().filter(|t| !t.is_empty()) {
             let term = Term::from_field_text(self.f_tags, tag);
             subqueries.push((
                 Occur::Must,
@@ -279,9 +513,39 @@ impl Searcher for TantivySearcher {
             ));
         }
 
-        // Category filter.
-        if let Some(ref cat) = query.category {
+        // Category filter. Empty-string values are treated as absent — a
+        // bare `Term::from_field_text(field, "")` yields a term that matches
+        // nothing, which silently turns `--category ""` (or `{"category": ""}`
+        // over MCP) into "zero results" instead of "no filter". Mirror the
+        // text-query branch above (`Some(text) if !text.is_empty()`).
+        if let Some(ref cat) = query.category
+            && !cat.is_empty()
+        {
             let term = Term::from_field_text(self.f_category, cat);
+            subqueries.push((
+                Occur::Must,
+                Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
+            ));
+        }
+
+        // Status filter (frontmatter `status` field). Same empty-string
+        // guard rationale as the category filter above.
+        if let Some(ref status) = query.status
+            && !status.is_empty()
+        {
+            let term = Term::from_field_text(self.f_status, status);
+            subqueries.push((
+                Occur::Must,
+                Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
+            ));
+        }
+
+        // Author filter (frontmatter `author` field). Same empty-string
+        // guard rationale as the category filter above.
+        if let Some(ref author) = query.author
+            && !author.is_empty()
+        {
+            let term = Term::from_field_text(self.f_author, author);
             subqueries.push((
                 Occur::Must,
                 Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
@@ -290,9 +554,20 @@ impl Searcher for TantivySearcher {
 
         let combined = BooleanQuery::new(subqueries);
 
+        // Pull a generous page so post-sort (Title) still has the right top-N.
+        // For Relevance we honour query.limit directly.
+        let collector_limit = match query.sort {
+            SearchSort::Relevance => query.limit,
+            // Date sorts and title sort run as a fixed top-N then sort in
+            // memory. 1000 is enough for any wiki we'd index in v1; if that
+            // ever stops being true, pivot to Tantivy's order_by_fast_field.
+            SearchSort::Title | SearchSort::CreatedDesc | SearchSort::CreatedAsc => {
+                query.limit.max(1000)
+            }
+        };
         let top_docs = searcher.search(
             &combined,
-            &TopDocs::with_limit(query.limit).order_by_score(),
+            &TopDocs::with_limit(collector_limit).order_by_score(),
         )?;
 
         // Snippet generator for the body field.
@@ -342,6 +617,24 @@ impl Searcher for TantivySearcher {
                 snippet: snippet_text,
                 score: *score,
             });
+        }
+
+        // Apply non-Relevance sort modes. Date sorts (`CreatedDesc` /
+        // `CreatedAsc`) are intentionally a no-op at the search layer: git
+        // history isn't visible to Tantivy. The CLI/MCP wrappers that have
+        // a wiki_dir handy resolve those after enrichment. Leaving them as
+        // pass-through keeps the searcher pure and avoids embedding git
+        // logic in the index layer.
+        match query.sort {
+            SearchSort::Title => {
+                hits.sort_by_key(|h| h.title.to_lowercase());
+            }
+            SearchSort::Relevance | SearchSort::CreatedDesc | SearchSort::CreatedAsc => {}
+        }
+
+        // Apply user-facing limit after sort.
+        if hits.len() > query.limit {
+            hits.truncate(query.limit);
         }
 
         let total = hits.len();
@@ -433,9 +726,8 @@ mod tests {
         let results = searcher
             .search(&SearchQuery {
                 text: Some("attention mechanism".to_string()),
-                tags: vec![],
-                category: None,
                 limit: 10,
+                ..SearchQuery::default()
             })
             .expect("search");
 
@@ -471,9 +763,8 @@ mod tests {
         let results = searcher
             .search(&SearchQuery {
                 text: Some("attention".to_string()),
-                tags: vec![],
-                category: None,
                 limit: 10,
+                ..SearchQuery::default()
             })
             .expect("search");
 

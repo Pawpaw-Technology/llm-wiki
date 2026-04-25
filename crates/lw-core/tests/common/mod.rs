@@ -103,6 +103,7 @@ pub fn make_page(title: &str, tags: &[&str], decay: &str, body: &str) -> Page {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: body.to_string(),
     }
 }

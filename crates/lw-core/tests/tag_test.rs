@@ -10,6 +10,7 @@ fn make_page(title: &str, tags: &[&str]) -> Page {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: String::new(),
     }
 }

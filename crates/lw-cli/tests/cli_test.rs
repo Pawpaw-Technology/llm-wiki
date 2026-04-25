@@ -411,6 +411,243 @@ fn query_stale_flag_accepted() {
     assert_eq!(json["results"].as_array().unwrap().len(), 0);
 }
 
+// === frontmatter field queries (#41) ===
+
+#[test]
+fn query_filter_by_status() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/tools/draft.md"),
+        "---\ntitle: Draft Page\ntags: [rust]\nstatus: draft\n---\n\nDraft body.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("wiki/tools/published.md"),
+        "---\ntitle: Published Page\ntags: [rust]\nstatus: published\n---\n\nPublished body.\n",
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "query",
+            "",
+            "--status",
+            "draft",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "draft status filter should return at least one hit, got stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let total = json["total"].as_u64().unwrap();
+    assert_eq!(total, 1, "expected exactly 1 draft page");
+    assert_eq!(json["results"][0]["title"], "Draft Page");
+}
+
+#[test]
+fn query_filter_by_author() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/tools/by-alice.md"),
+        "---\ntitle: By Alice\ntags: [rust]\nauthor: alice\n---\n\nAlice's body.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("wiki/tools/by-bob.md"),
+        "---\ntitle: By Bob\ntags: [rust]\nauthor: bob\n---\n\nBob's body.\n",
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "query",
+            "",
+            "--author",
+            "alice",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["total"].as_u64().unwrap(), 1);
+    assert_eq!(json["results"][0]["title"], "By Alice");
+}
+
+#[test]
+fn query_combined_filters_and_logic() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/tools/match.md"),
+        "---\ntitle: Match\ntags: [rust]\nstatus: draft\n---\n\nMatch body.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("wiki/tools/wrong-status.md"),
+        "---\ntitle: WrongStatus\ntags: [rust]\nstatus: published\n---\n\nWrong status.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("wiki/architecture/wrong-cat.md"),
+        "---\ntitle: WrongCat\ntags: [rust]\nstatus: draft\n---\n\nWrong category.\n",
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "query",
+            "",
+            "--tag",
+            "rust",
+            "--category",
+            "tools",
+            "--status",
+            "draft",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json["total"].as_u64().unwrap(),
+        1,
+        "combined AND filter must return only the page matching all 3 conditions"
+    );
+    assert_eq!(json["results"][0]["title"], "Match");
+}
+
+#[test]
+fn query_repeatable_tag_flag() {
+    // `lw query --tag rust --tag markdown` must require BOTH tags.
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/tools/both.md"),
+        "---\ntitle: BothTags\ntags: [rust, markdown]\n---\n\nBoth tags body.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("wiki/tools/only-rust.md"),
+        "---\ntitle: OnlyRust\ntags: [rust]\n---\n\nOnly rust body.\n",
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "query",
+            "",
+            "--tag",
+            "rust",
+            "--tag",
+            "markdown",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["total"].as_u64().unwrap(), 1);
+    assert_eq!(json["results"][0]["title"], "BothTags");
+}
+
+#[test]
+fn query_sort_by_title() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    std::fs::write(
+        tmp.path().join("wiki/tools/c.md"),
+        "---\ntitle: Charlie\ntags: [t]\n---\n\ncharlie\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("wiki/tools/a.md"),
+        "---\ntitle: Alpha\ntags: [t]\n---\n\nalpha\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("wiki/tools/b.md"),
+        "---\ntitle: Beta\ntags: [t]\n---\n\nbeta\n",
+    )
+    .unwrap();
+    let output = lw()
+        .args([
+            "query",
+            "",
+            "--tag",
+            "t",
+            "--sort",
+            "title",
+            "--root",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["title"], "Alpha");
+    assert_eq!(results[1]["title"], "Beta");
+    assert_eq!(results[2]["title"], "Charlie");
+}
+
+#[test]
+fn query_help_shows_new_flags() {
+    lw().args(["query", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--status"))
+        .stdout(predicate::str::contains("--author"))
+        .stdout(predicate::str::contains("--sort"));
+}
+
+#[test]
+fn query_invalid_sort_fails() {
+    let tmp = TempDir::new().unwrap();
+    lw().args(["init", "--root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+    lw().args([
+        "query",
+        "",
+        "--sort",
+        "bogus",
+        "--root",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .failure();
+}
+
 // === ingest --dry-run (#21) ===
 
 #[test]

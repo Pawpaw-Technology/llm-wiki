@@ -48,6 +48,9 @@ fn step3_search_text_and_tag_filter() {
             text: Some("attention".into()),
             tags: vec![],
             category: None,
+            status: None,
+            author: None,
+            sort: lw_core::search::SearchSort::Relevance,
             limit: 10,
         })
         .unwrap();
@@ -65,6 +68,9 @@ fn step3_search_text_and_tag_filter() {
             text: Some("training".into()),
             tags: vec!["training".into()],
             category: None,
+            status: None,
+            author: None,
+            sort: lw_core::search::SearchSort::Relevance,
             limit: 10,
         })
         .unwrap();
@@ -167,6 +173,9 @@ async fn full_agent_workflow() {
             text: Some("attention".into()),
             tags: vec![],
             category: None,
+            status: None,
+            author: None,
+            sort: lw_core::search::SearchSort::Relevance,
             limit: 10,
         })
         .unwrap();

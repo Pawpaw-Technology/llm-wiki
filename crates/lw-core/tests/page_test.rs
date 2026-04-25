@@ -105,3 +105,37 @@ Body content here.
     assert_eq!(page.generator, reparsed.generator);
     assert_eq!(page.body.trim(), reparsed.body.trim());
 }
+
+/// Reviewer fix (#41 minor C): `Page.status` was added without a YAML
+/// round-trip test. Verify both `Some("draft")` and `None` survive a
+/// full to_markdown → parse cycle.
+#[test]
+fn page_with_status_round_trips_yaml() {
+    let mut page = Page::new("Status Page", &["t"], "Status body.");
+    page.status = Some("draft".to_string());
+    let rendered = page.to_markdown();
+    let reparsed = Page::parse(&rendered).expect("re-parse status round-trip");
+    assert_eq!(reparsed.title, "Status Page");
+    assert_eq!(reparsed.status, Some("draft".to_string()));
+    // Ensure the YAML actually contains the field, not just survives the
+    // round-trip via a serde quirk.
+    assert!(
+        rendered.contains("status: draft"),
+        "rendered markdown should contain 'status: draft'; got:\n{rendered}"
+    );
+}
+
+#[test]
+fn page_without_status_round_trips_yaml() {
+    let page = Page::new("No Status", &["t"], "body");
+    assert_eq!(page.status, None);
+    let rendered = page.to_markdown();
+    let reparsed = Page::parse(&rendered).expect("re-parse without status");
+    assert_eq!(reparsed.status, None);
+    // None must serialize as absent, not as a null/empty string, to keep
+    // YAML clean for human readers.
+    assert!(
+        !rendered.contains("status:"),
+        "rendered markdown must omit 'status:' when None; got:\n{rendered}"
+    );
+}

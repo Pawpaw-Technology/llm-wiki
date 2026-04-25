@@ -81,6 +81,9 @@ fn mcp_new_still_rebuilds_when_index_is_empty() {
         text: Some("fresh".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = reader.search(&q).unwrap();

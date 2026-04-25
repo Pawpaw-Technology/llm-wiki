@@ -34,6 +34,56 @@ pub fn page_age_days(path: &Path) -> Option<i64> {
     Some((now - ts) / 86400)
 }
 
+/// Unix epoch seconds of the **first** git commit that introduced this file
+/// (`git log --follow --reverse --format=%at -- <path> | head -1`).
+/// Returns `None` if the file has no git history (untracked or not in a repo).
+///
+/// Used by `lw query --sort created_desc/created_asc` (issue #41) to order
+/// hits by creation time. The search index doesn't have access to git, so
+/// the CLI does this lookup post-hoc on the result set.
+///
+/// Anchors `git` to the file's parent directory via `-C`, so the lookup
+/// works regardless of the calling process's cwd. Without that anchor,
+/// `lw serve` (whose cwd is whatever the agent launched it from) and the
+/// MCP unit tests (cwd = workspace root) would both see `git: not a git
+/// repository` and silently return `None` for every page.
+#[tracing::instrument]
+pub fn page_first_commit_time(path: &Path) -> Result<Option<i64>> {
+    let path_str = match path.to_str() {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    // `-C <dir>` makes git locate the repo by walking up from `dir`. Use
+    // the file's parent so a file in a sub-directory of the repo still
+    // resolves correctly.
+    let cwd = path.parent().and_then(|p| p.to_str()).unwrap_or(".");
+    let output = Command::new("git")
+        .args([
+            "-C",
+            cwd,
+            "log",
+            "--follow",
+            "--reverse",
+            "--format=%at",
+            "--",
+            path_str,
+        ])
+        .output()
+        .map_err(|e| WikiError::Internal(format!("git log failed: {e}")))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|e| WikiError::Internal(format!("git output not utf-8: {e}")))?;
+    // `git log --reverse` lists oldest first; take the first non-empty line.
+    let first = stdout.lines().find(|l| !l.trim().is_empty());
+    let ts = match first {
+        Some(l) => l.trim().parse::<i64>().ok(),
+        None => None,
+    };
+    Ok(ts.filter(|&t| t > 0))
+}
+
 /// Freshness level of a wiki page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreshnessLevel {
