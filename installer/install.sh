@@ -144,13 +144,25 @@ tar -C "$TMPDIR" -xzf "$TMPDIR/$ASSET"
 mkdir -p "$LW_INSTALL_PREFIX/bin"
 install -m 755 "$TMPDIR/lw" "$LW_INSTALL_PREFIX/bin/lw"
 
-# Replace asset trees atomically per directory
+# Replace asset trees via move-old-aside pattern (closes #73).
+# Order of operations per directory:
+#   1. Defensively remove any orphaned .old or .new left by a prior interrupted install.
+#   2. Stage new content as $d.new.
+#   3. Move existing $d aside to $d.old (old data is never deleted until new is in place).
+#   4. Rename $d.new into $d (new is now live; window where $d is absent is a single mv).
+#   5. Remove $d.old sidecar.
+# An interrupt between steps 3 and 4 leaves both $d.old and $d.new on disk — fully
+# recoverable: the next install run cleans them up in step 1 and retries.
 for d in skills templates integrations installer; do
   if [ -d "$TMPDIR/$d" ]; then
+    rm -rf "${LW_INSTALL_PREFIX:?}/$d.old"
     rm -rf "${LW_INSTALL_PREFIX:?}/$d.new"
     cp -R "$TMPDIR/$d" "$LW_INSTALL_PREFIX/$d.new"
-    rm -rf "${LW_INSTALL_PREFIX:?}/$d"
+    if [ -d "$LW_INSTALL_PREFIX/$d" ]; then
+      mv "$LW_INSTALL_PREFIX/$d" "$LW_INSTALL_PREFIX/$d.old"
+    fi
     mv "$LW_INSTALL_PREFIX/$d.new" "$LW_INSTALL_PREFIX/$d"
+    rm -rf "${LW_INSTALL_PREFIX:?}/$d.old"
   fi
 done
 
