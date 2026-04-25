@@ -178,12 +178,15 @@ fn write_page_leaves_no_tmp_file() {
     // The page must exist and be readable.
     assert!(path.exists());
 
-    // No .tmp files should be left behind in the parent directory.
+    // No NamedTempFile leftovers should remain in the parent directory.
+    // `NamedTempFile::new_in` defaults to `prefix = ".tmp"` with a random suffix
+    // (e.g. ".tmpABCDEF"). Such dotfile names have no extension as Rust sees it,
+    // so we must match on the file_name prefix instead of `Path::extension()`.
     let parent = path.parent().unwrap();
     let leftover_tmps: Vec<_> = std::fs::read_dir(parent)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "tmp"))
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp"))
         .collect();
     assert!(
         leftover_tmps.is_empty(),
@@ -191,8 +194,12 @@ fn write_page_leaves_no_tmp_file() {
     );
 }
 
-/// Test B (Unix-only): A pre-existing symlink at a predictable temp path must NOT
-/// be followed — the victim file pointed to by the symlink must remain intact.
+/// Test B (Unix-only): A pre-existing symlink at the destination page path must
+/// NOT be followed — the victim file pointed to by the symlink must remain
+/// intact. With the old `std::fs::write(page_path, body)` implementation the
+/// kernel would follow the symlink and overwrite the victim. With the
+/// rename(2)-based atomic_write the symlink directory entry is replaced with
+/// the new regular file and the victim is left untouched.
 #[cfg(unix)]
 #[test]
 fn write_page_does_not_follow_victim_symlink() {
@@ -205,18 +212,15 @@ fn write_page_does_not_follow_victim_symlink() {
     let page_dir = root.join("wiki/architecture");
     let page_path = page_dir.join("test.md");
 
-    // Create a victim file that an attacker might point to via a pre-placed symlink.
+    // Create a victim file outside the wiki tree.
     let victim_path = tmp.path().join("victim.txt");
     std::fs::write(&victim_path, b"SECRET CONTENT").unwrap();
 
-    // Create a symlink at the predictable temp path the OLD code would have used.
-    // Old code did `std::fs::write(path, body)` directly, so the victim was the
-    // page itself. With the new tempfile-based helper the temp file gets a random
-    // name inside the parent dir. To ensure we exercise the "no predictable name"
-    // property, we place a symlink at "test.md.tmp" (the historically common
-    // predictable temp name pattern) pointing at the victim.
-    let fake_tmp = page_dir.join("test.md.tmp");
-    symlink(&victim_path, &fake_tmp).unwrap();
+    // Plant the symlink AT the destination page path. With non-atomic
+    // `std::fs::write(page_path, body)` this would follow the symlink and
+    // clobber `victim.txt`. The rename-based atomic write must replace the
+    // symlink entry rather than follow it.
+    symlink(&victim_path, &page_path).unwrap();
 
     // Write the page — this must succeed without clobbering the victim.
     let page = Page {
@@ -238,11 +242,12 @@ fn write_page_does_not_follow_victim_symlink() {
         "victim file was clobbered by write_page"
     );
 
-    // The page itself should have been written correctly.
-    assert!(page_path.exists());
-
-    // The fake-tmp symlink should still be intact (we did not remove it).
-    assert!(fake_tmp.exists() || std::fs::symlink_metadata(&fake_tmp).is_ok());
+    // The page itself should now be a regular file, not a symlink.
+    let meta = std::fs::symlink_metadata(&page_path).unwrap();
+    assert!(
+        meta.file_type().is_file(),
+        "page_path should be a regular file after atomic write, not a symlink"
+    );
 }
 
 /// Test C: atomic_write (the low-level helper) round-trips bytes correctly.
