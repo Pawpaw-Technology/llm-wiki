@@ -2,11 +2,13 @@
 //! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint, wiki_stats tools.
 
 use lw_core::fs::{
-    atomic_write, category_from_path, list_pages, read_page, validate_wiki_path, write_page,
+    NewPageRequest, atomic_write, category_from_path, list_pages, new_page, read_page,
+    validate_wiki_path, write_page,
 };
 use lw_core::git::{self, FreshnessLevel};
 use lw_core::ingest;
 use lw_core::page::Page;
+use lw_core::schema::WikiSchema;
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
 use lw_core::status::gather_status;
 use lw_core::tag::Taxonomy;
@@ -157,11 +159,27 @@ pub struct WikiLintArgs {
     pub category: Option<String>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WikiNewArgs {
+    /// Target category (must match a category in the schema, e.g. "tools")
+    pub category: String,
+    /// URL-safe slug for the page (e.g. "comrak-ast-parser"); must match [a-z0-9_-]+
+    pub slug: String,
+    /// Human-readable page title
+    pub title: String,
+    /// Tags to attach to the page
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Author name (optional)
+    pub author: Option<String>,
+}
+
 // === Server ===
 
 #[derive(Clone)]
 pub struct WikiMcpServer {
     wiki_root: PathBuf,
+    schema: WikiSchema,
     searcher: Arc<TantivySearcher>,
     default_review_days: u32,
     tool_router: ToolRouter<Self>,
@@ -570,6 +588,17 @@ impl WikiMcpServer {
         }
     }
 
+    /// Scaffold a new wiki page with schema-enforced frontmatter and body template.
+    #[tool(
+        name = "wiki_new",
+        description = "Create a new wiki page with schema-enforced frontmatter and body template. Returns the full rendered page content so agents can immediately follow up with wiki_write section calls. Errors if the category is unknown or the slug already exists."
+    )]
+    fn wiki_new(&self, Parameters(args): Parameters<WikiNewArgs>) -> String {
+        // RED stub — replaced in GREEN
+        let _ = (&args.category, &args.slug, &args.title, &args.tags, &args.author);
+        serde_json::json!({"error": "wiki_new not implemented (RED stub)"}).to_string()
+    }
+
     /// Get wiki health statistics: page count, category breakdown, freshness distribution.
     #[tool(
         name = "wiki_stats",
@@ -621,9 +650,9 @@ impl ServerHandler for WikiMcpServer {
             ))
             .with_instructions(
                 "LLM Wiki knowledge base server. Use wiki_query to search, wiki_read to read pages, \
-                 wiki_browse to list pages, wiki_tags to list tags, wiki_write to create/update pages, \
-                 wiki_ingest to import source material, wiki_lint to check freshness, \
-                 and wiki_stats to get wiki health statistics."
+                 wiki_browse to list pages, wiki_tags to list tags, wiki_new to scaffold a new page, \
+                 wiki_write to create/update pages, wiki_ingest to import source material, \
+                 wiki_lint to check freshness, and wiki_stats to get wiki health statistics."
             )
     }
 }
@@ -653,6 +682,7 @@ impl WikiMcpServer {
 
         Ok(Self {
             wiki_root,
+            schema,
             searcher,
             default_review_days,
             tool_router: Self::tool_router(),
@@ -801,5 +831,156 @@ mod tests {
                 || msg.contains("exclusive"),
             "error should name the conflict: {msg}"
         );
+    }
+
+    // ── wiki_new tests ────────────────────────────────────────────────────────
+
+    fn new_args(
+        category: &str,
+        slug: &str,
+        title: &str,
+        tags: Vec<&str>,
+        author: Option<&str>,
+    ) -> WikiNewArgs {
+        WikiNewArgs {
+            category: category.to_string(),
+            slug: slug.to_string(),
+            title: title.to_string(),
+            tags: tags.into_iter().map(String::from).collect(),
+            author: author.map(String::from),
+        }
+    }
+
+    #[tokio::test]
+    async fn wiki_new_happy_path_returns_content() {
+        let (tmp, server) = spawn_server();
+        let args = new_args(
+            "tools",
+            "comrak-ast-parser",
+            "Comrak AST Parser",
+            vec!["rust", "markdown"],
+            Some("claude"),
+        );
+
+        let resp = server.wiki_new(Parameters(args));
+        let v = parse(&resp);
+
+        // No error field
+        assert!(v.get("error").is_none(), "unexpected error: {resp}");
+
+        // Required fields present
+        assert_eq!(v["category"], "tools", "category mismatch: {resp}");
+        assert_eq!(v["slug"], "comrak-ast-parser", "slug mismatch: {resp}");
+        assert!(
+            v.get("path").and_then(|p| p.as_str()).is_some(),
+            "missing path: {resp}"
+        );
+        let content = v["content"].as_str().expect("missing content field");
+        assert!(
+            content.starts_with("---\ntitle:"),
+            "content should start with frontmatter, got: {content}"
+        );
+
+        // File exists on disk
+        let expected = tmp
+            .path()
+            .join("wiki/tools/comrak-ast-parser.md");
+        assert!(expected.exists(), "file not created at {expected:?}");
+    }
+
+    #[tokio::test]
+    async fn wiki_new_duplicate_slug_returns_error_json() {
+        let (_tmp, server) = spawn_server();
+        let args = new_args("tools", "dup-slug", "Dup Slug", vec![], None);
+
+        // First call succeeds
+        let resp1 = server.wiki_new(Parameters(args));
+        let v1 = parse(&resp1);
+        assert!(v1.get("error").is_none(), "first call should succeed: {resp1}");
+
+        // Second call with same args
+        let args2 = new_args("tools", "dup-slug", "Dup Slug", vec![], None);
+        let resp2 = server.wiki_new(Parameters(args2));
+        let v2 = parse(&resp2);
+
+        let msg = v2["error"].as_str().expect("expected error field on duplicate");
+        assert!(
+            msg.starts_with("page already exists:"),
+            "error should be 'page already exists: ...', got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wiki_new_unknown_category_returns_error_json() {
+        let (_tmp, server) = spawn_server();
+        let args = new_args("bogus", "some-slug", "Some Title", vec![], None);
+
+        let resp = server.wiki_new(Parameters(args));
+        let v = parse(&resp);
+
+        let msg = v["error"].as_str().expect("expected error field for unknown category");
+        assert!(
+            msg.starts_with("unknown category: bogus"),
+            "error should start with 'unknown category: bogus', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn with_instructions_mentions_wiki_new() {
+        // The instructions string is embedded in get_info(); we verify it at the
+        // source level by checking the hardcoded string constant in the binary.
+        // Construct a server and call get_info() to retrieve the instructions.
+        let tmp = TempDir::new().unwrap();
+        lw_core::fs::init_wiki(tmp.path(), &WikiSchema::default()).unwrap();
+        let server = WikiMcpServer::new(tmp.path().to_path_buf()).unwrap();
+        let info = server.get_info();
+        let instructions = info
+            .instructions
+            .as_deref()
+            .unwrap_or("");
+        assert!(
+            instructions.contains("wiki_new"),
+            "with_instructions should mention wiki_new, got: {instructions}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wiki_query_finds_page_after_wiki_new() {
+        let (_tmp, server) = spawn_server();
+        let args = new_args(
+            "tools",
+            "unique-foo-title",
+            "A Unique Foo Title",
+            vec!["search-test"],
+            None,
+        );
+
+        let resp = server.wiki_new(Parameters(args));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "wiki_new failed: {resp}");
+
+        // Commit the index so wiki_query sees the new page
+        // (wiki_new triggers index_page + commit)
+        let query_args = WikiQueryArgs {
+            query: "Unique Foo".to_string(),
+            tags: None,
+            category: None,
+            limit: Some(10),
+        };
+        let qresp = server.wiki_query(Parameters(query_args));
+        let qv = parse(&qresp);
+
+        let hits = qv["hits"].as_array().expect("expected hits array");
+        assert!(
+            !hits.is_empty(),
+            "wiki_query should find the new page, got: {qresp}"
+        );
+        let found = hits.iter().any(|h| {
+            h["path"]
+                .as_str()
+                .map(|p| p.contains("unique-foo-title"))
+                .unwrap_or(false)
+        });
+        assert!(found, "hits should include unique-foo-title page: {qresp}");
     }
 }
