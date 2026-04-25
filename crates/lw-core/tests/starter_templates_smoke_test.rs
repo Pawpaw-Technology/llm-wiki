@@ -1,4 +1,3 @@
-use lw_core::fs::{init_wiki, load_schema, new_page, NewPageRequest};
 /// Smoke tests for starter vault schema.toml files (issue #62)
 ///
 /// These tests load the real starter `schema.toml` files from `templates/` and
@@ -7,6 +6,7 @@ use lw_core::fs::{init_wiki, load_schema, new_page, NewPageRequest};
 ///
 /// Pure-Rust — no CLI shell-out — so this test slice is parallelizable with #60 / #61.
 use lw_core::WikiError;
+use lw_core::fs::{NewPageRequest, init_wiki, load_schema, new_page};
 use tempfile::TempDir;
 
 /// Returns the absolute path to a starter template directory.

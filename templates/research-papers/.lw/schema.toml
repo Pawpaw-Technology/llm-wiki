@@ -4,3 +4,59 @@ default_review_days = 180
 
 [tags]
 categories = ["architecture", "training", "evaluation", "applications"]
+
+[categories.architecture]
+review_days = 180
+required_fields = ["title", "tags"]
+template = """
+## Key Ideas
+
+## Method
+
+## Results
+
+## Relation to Prior Work
+
+## Open Questions
+"""
+
+[categories.training]
+review_days = 180
+required_fields = ["title", "tags"]
+template = """
+## Setup
+
+## Method
+
+## Results
+
+## Compute / Cost
+
+## Open Questions
+"""
+
+[categories.evaluation]
+review_days = 180
+required_fields = ["title", "tags"]
+template = """
+## Benchmark
+
+## Metric
+
+## Findings
+
+## Limitations
+"""
+
+[categories.applications]
+review_days = 180
+required_fields = ["title", "tags"]
+template = """
+## Domain
+
+## Approach
+
+## Results
+
+## Caveats
+"""
