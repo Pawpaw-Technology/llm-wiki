@@ -1173,9 +1173,11 @@ mod tests {
         let msg = v2["error"]
             .as_str()
             .expect("expected error field on duplicate");
-        assert!(
-            msg.starts_with("page already exists:"),
-            "error should be 'page already exists: ...', got: {msg}"
+        // Path must be VAULT-RELATIVE (issue #87) — agents feed this back into
+        // wiki_read/wiki_write, which expect vault-relative paths.
+        assert_eq!(
+            msg, "page already exists: wiki/tools/dup-slug.md",
+            "error must carry vault-relative path, got: {msg}"
         );
     }
 

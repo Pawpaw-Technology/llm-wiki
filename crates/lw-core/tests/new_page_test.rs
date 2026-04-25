@@ -105,11 +105,18 @@ fn duplicate_slug_returns_page_already_exists() {
     let (path, _) = new_page(root, &schema, make_req()).unwrap();
     let original_content = std::fs::read_to_string(&path).unwrap();
 
-    // Second write must fail
+    // Second write must fail with a VAULT-RELATIVE path (issue #87) — never the
+    // absolute filesystem path, since the Display string is surfaced verbatim by
+    // CLI stderr (#60) and MCP error JSON (#61), and agents that feed it back
+    // into wiki_read/wiki_write expect vault-relative.
     let err = new_page(root, &schema, make_req()).unwrap_err();
     match err {
         WikiError::PageAlreadyExists { path: err_path } => {
-            assert_eq!(err_path, root.join("wiki/tools/duplicate.md"));
+            assert_eq!(
+                err_path,
+                std::path::PathBuf::from("wiki/tools/duplicate.md"),
+                "PageAlreadyExists.path must be vault-relative, not absolute"
+            );
         }
         other => panic!("expected PageAlreadyExists, got {other:?}"),
     }
@@ -358,13 +365,13 @@ fn category_without_config_block_uses_empty_template() {
 /// specified in issue #59. These strings are the contract reused by #60 and #61.
 #[test]
 fn display_strings_match_spec() {
-    // PageAlreadyExists
+    // PageAlreadyExists — spec example uses vault-relative path (issue #87).
     let e = WikiError::PageAlreadyExists {
-        path: std::path::PathBuf::from("/wiki/tools/foo.md"),
+        path: std::path::PathBuf::from("wiki/tools/foo.md"),
     };
     assert_eq!(
         e.to_string(),
-        "page already exists: /wiki/tools/foo.md",
+        "page already exists: wiki/tools/foo.md",
         "PageAlreadyExists display must match spec"
     );
 
