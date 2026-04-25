@@ -41,7 +41,8 @@ integrations/        # declarative TOML adapters per agent tool
 
 installer/
 ├── install.sh       # POSIX, curl-installable, sha256-verified
-└── uninstall.sh     # reverses install; preserves vault data
+├── uninstall.sh     # reverses install; preserves vault data
+└── tests/           # bash unit tests for installer logic (asset swap, integrate-gate)
 ```
 
 Vaults (wiki content) are **separate git repos** of markdown files; users bring their own.
@@ -72,6 +73,7 @@ Spec, plans, and smoke transcripts that documented the v0.2.0 product wrapper ro
 - Tags are free-form (not enumerated in schema); categories are directories
 - `_uncategorized/` is the fallback directory; lint reminds to categorize
 - Tantivy's `IndexWriter` is opened lazily on first write, not eagerly in `TantivySearcher::new`. `lw serve` would otherwise hold the writer lock for its lifetime and block every concurrent `lw query`. `WikiError::IndexLocked` lets read-only callers fall back to the existing index instead of failing.
+- Crash-safe file writes go through `lw_core::fs::atomic_write` (unique `NamedTempFile::new_in(parent)` → fsync → rename → parent-dir fsync on Unix). `write_page`, the CLI section-write path (`lw write`), and the MCP `wiki_write` handler all funnel through it. Use it for any new code that writes a file the agent could be reading concurrently — never `std::fs::write` directly into a vault path.
 
 ## CLI Commands
 
