@@ -1,10 +1,12 @@
+use crate::git_commit::{AutoCommitFlags, run_auto_commit};
 use crate::output::Format;
 use lw_core::fs::load_schema;
+use lw_core::git::CommitAction;
 use lw_core::ingest::{extract_h1, ingest_source, slug_from_title_or_h1};
 use lw_core::page::slugify;
 use serde::Serialize;
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
 struct IngestOutput {
@@ -13,6 +15,13 @@ struct IngestOutput {
     category: String,
     decay: String,
     dry_run: bool,
+}
+
+/// Auto-commit options forwarded from the CLI parser.
+pub struct CommitOpts {
+    pub no_commit: bool,
+    pub push: bool,
+    pub author: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -27,6 +36,7 @@ pub fn run(
     yes: bool,
     dry_run: bool,
     output_format: &Format,
+    commit_opts: CommitOpts,
 ) -> anyhow::Result<()> {
     let schema = load_schema(root)?;
 
@@ -168,6 +178,27 @@ pub fn run(
         raw_subdir,
         result.raw_path.file_name().unwrap().to_string_lossy()
     );
+
+    // Auto-commit (issue #38). The committed path is the raw file we
+    // just staged — `result.raw_path` is absolute, strip the wiki root
+    // for repo-relative form. The URL origin (if any) becomes the
+    // `source:` line in the commit body.
+    let rel_for_commit: PathBuf = match result.raw_path.strip_prefix(root) {
+        Ok(p) => p.to_path_buf(),
+        Err(_) => result.raw_path.clone(),
+    };
+    run_auto_commit(
+        root,
+        &[rel_for_commit],
+        CommitAction::Ingest,
+        &raw_ref,
+        AutoCommitFlags {
+            no_commit: commit_opts.no_commit,
+            push: commit_opts.push,
+            author: commit_opts.author.as_deref(),
+            source: url_origin.as_deref(),
+        },
+    )?;
 
     let output = IngestOutput {
         path: raw_ref,

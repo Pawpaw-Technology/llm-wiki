@@ -237,13 +237,14 @@ fn lw_write_overwrite_auto_commits() {
     let root = tmp.path();
 
     let before = commit_count(root);
+    // Use `--content=…` (single arg) so clap doesn't see the `---` frontmatter
+    // marker as a separator.
     lw().args([
         "write",
         "architecture/edited.md",
         "--mode",
         "overwrite",
-        "--content",
-        "---\ntitle: Edited\ntags: [t]\n---\n\nbody\n",
+        "--content=---\ntitle: Edited\ntags: [t]\n---\n\nbody\n",
         "--root",
         root.to_str().unwrap(),
     ])
@@ -324,8 +325,7 @@ fn lw_write_no_commit_skips_commit() {
         "architecture/uncommitted.md",
         "--mode",
         "overwrite",
-        "--content",
-        "---\ntitle: U\ntags: [t]\n---\n\nbody\n",
+        "--content=---\ntitle: U\ntags: [t]\n---\n\nbody\n",
         "--no-commit",
         "--root",
         root.to_str().unwrap(),

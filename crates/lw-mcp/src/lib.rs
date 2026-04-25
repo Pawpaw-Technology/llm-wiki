@@ -5,7 +5,7 @@ use lw_core::fs::{
     NewPageRequest, atomic_write, category_from_path, list_pages, new_page, read_page,
     validate_wiki_path, write_page,
 };
-use lw_core::git::{self, FreshnessLevel};
+use lw_core::git::{self, AutoCommitOpts, CommitAction, FreshnessLevel, auto_commit};
 use lw_core::ingest;
 use lw_core::page::Page;
 use lw_core::schema::WikiSchema;
@@ -17,8 +17,49 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// Caller-supplied auto-commit fields, packed to keep `mcp_auto_commit`
+/// from tripping the `clippy::too_many_arguments` lint.
+struct McpCommitArgs<'a> {
+    commit: Option<bool>,
+    push: Option<bool>,
+    author: Option<&'a str>,
+    source: Option<&'a str>,
+}
+
+/// Run the auto-commit policy for an MCP write tool.
+///
+/// Returns `Some(error_json)` if the commit/push failed — the caller
+/// should propagate it as the tool's response. Returns `None` on success
+/// (or graceful no-op for non-git directories).
+fn mcp_auto_commit(
+    repo_root: &Path,
+    paths: &[PathBuf],
+    action: CommitAction,
+    page_slug: &str,
+    args: McpCommitArgs<'_>,
+) -> Option<String> {
+    let opts = AutoCommitOpts {
+        commit: args.commit.unwrap_or(true),
+        push: args.push.unwrap_or(false),
+        author: args.author,
+        source: args.source,
+        generator_version: env!("CARGO_PKG_VERSION"),
+    };
+    match auto_commit(repo_root, paths, action, page_slug, opts) {
+        Ok(outcome) => {
+            if let Some(w) = &outcome.dirty_warning {
+                tracing::warn!("{w}");
+            }
+            None
+        }
+        Err(e) => {
+            Some(serde_json::json!({"error": format!("auto-commit failed: {e}")}).to_string())
+        }
+    }
+}
 
 // === Tool argument structs ===
 
@@ -417,6 +458,13 @@ impl WikiMcpServer {
             Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
         };
 
+        // Repo-relative path used for both the commit subject and `git add`.
+        let rel_for_commit: PathBuf = match abs_path.strip_prefix(&self.wiki_root) {
+            Ok(p) => p.to_path_buf(),
+            Err(_) => abs_path.clone(),
+        };
+        let display_path = rel_for_commit.to_string_lossy().to_string();
+
         match args.mode.as_str() {
             "overwrite" => {
                 let page = match Page::parse(&args.content) {
@@ -437,6 +485,21 @@ impl WikiMcpServer {
                 }
                 if let Err(e) = self.searcher.commit() {
                     tracing::warn!("Failed to commit index: {}", e);
+                }
+
+                if let Some(err_resp) = mcp_auto_commit(
+                    &self.wiki_root,
+                    std::slice::from_ref(&rel_for_commit),
+                    CommitAction::Update,
+                    &display_path,
+                    McpCommitArgs {
+                        commit: args.commit,
+                        push: args.push,
+                        author: args.author.as_deref(),
+                        source: args.source.as_deref(),
+                    },
+                ) {
+                    return err_resp;
                 }
 
                 serde_json::json!({
@@ -496,6 +559,26 @@ impl WikiMcpServer {
                         "error": format!("Failed to write page: {e}")
                     })
                     .to_string();
+                }
+
+                let action = if args.mode == "append_section" {
+                    CommitAction::Append
+                } else {
+                    CommitAction::Upsert
+                };
+                if let Some(err_resp) = mcp_auto_commit(
+                    &self.wiki_root,
+                    std::slice::from_ref(&rel_for_commit),
+                    action,
+                    &display_path,
+                    McpCommitArgs {
+                        commit: args.commit,
+                        push: args.push,
+                        author: args.author.as_deref(),
+                        source: args.source.as_deref(),
+                    },
+                ) {
+                    return err_resp;
                 }
 
                 let mut response = serde_json::json!({
@@ -571,7 +654,10 @@ impl WikiMcpServer {
     async fn ingest_from_path(&self, source_path: &str, args: &WikiIngestArgs) -> String {
         let source = PathBuf::from(source_path);
         match ingest::ingest_source(&self.wiki_root, &source, &args.raw_type).await {
-            Ok(result) => ingest_ok_payload(&result.raw_path, args),
+            Ok(result) => match self.ingest_auto_commit(&result.raw_path, args) {
+                Some(err) => err,
+                None => ingest_ok_payload(&result.raw_path, args),
+            },
             Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),
         }
     }
@@ -584,9 +670,35 @@ impl WikiMcpServer {
                 Err(e) => return serde_json::json!({"error": e}).to_string(),
             };
         match ingest::ingest_content(&self.wiki_root, &args.raw_type, &filename, content).await {
-            Ok(result) => ingest_ok_payload(&result.raw_path, args),
+            Ok(result) => match self.ingest_auto_commit(&result.raw_path, args) {
+                Some(err) => err,
+                None => ingest_ok_payload(&result.raw_path, args),
+            },
             Err(e) => serde_json::json!({"error": format!("Ingest failed: {e}")}).to_string(),
         }
+    }
+
+    /// Run the auto-commit policy after a successful ingest. Returns
+    /// `Some(error_response_json)` only when the commit/push fails — the
+    /// caller propagates it as the tool's response. Otherwise `None`.
+    fn ingest_auto_commit(&self, raw_path: &Path, args: &WikiIngestArgs) -> Option<String> {
+        let rel_for_commit: PathBuf = match raw_path.strip_prefix(&self.wiki_root) {
+            Ok(p) => p.to_path_buf(),
+            Err(_) => raw_path.to_path_buf(),
+        };
+        let display = rel_for_commit.to_string_lossy().to_string();
+        mcp_auto_commit(
+            &self.wiki_root,
+            std::slice::from_ref(&rel_for_commit),
+            CommitAction::Ingest,
+            &display,
+            McpCommitArgs {
+                commit: args.commit,
+                push: args.push,
+                author: args.author.as_deref(),
+                source: args.source.as_deref(),
+            },
+        )
     }
 
     /// Lint report for wiki pages: freshness, TODOs, broken related links, orphans, missing concepts.
@@ -628,6 +740,8 @@ impl WikiMcpServer {
         description = "Create a new wiki page with schema-enforced frontmatter and body template. Returns the full rendered page content so agents can immediately follow up with wiki_write section calls. Errors if the category is unknown or the slug already exists."
     )]
     fn wiki_new(&self, Parameters(args): Parameters<WikiNewArgs>) -> String {
+        // Hold on to author so we can pass it to the auto-commit step too.
+        let author_for_commit = args.author.clone();
         let req = NewPageRequest {
             category: &args.category,
             slug: &args.slug,
@@ -661,6 +775,26 @@ impl WikiMcpServer {
                 }
                 if let Err(e) = self.searcher.commit() {
                     tracing::warn!("Failed to commit index after wiki_new: {}", e);
+                }
+
+                // Auto-commit the new page (issue #38).
+                let rel_for_commit: PathBuf = match abs_path.strip_prefix(&self.wiki_root) {
+                    Ok(p) => p.to_path_buf(),
+                    Err(_) => abs_path.clone(),
+                };
+                if let Some(err_resp) = mcp_auto_commit(
+                    &self.wiki_root,
+                    std::slice::from_ref(&rel_for_commit),
+                    CommitAction::Create,
+                    &json_path,
+                    McpCommitArgs {
+                        commit: args.commit,
+                        push: args.push,
+                        author: author_for_commit.as_deref(),
+                        source: args.source.as_deref(),
+                    },
+                ) {
+                    return err_resp;
                 }
 
                 serde_json::json!({
@@ -1185,11 +1319,7 @@ mod tests {
         let v = parse(&resp);
         assert_eq!(v["status"], "ok", "expected ok; got: {resp}");
 
-        assert_eq!(
-            commit_count(tmp.path()),
-            before,
-            "commit=false should skip"
-        );
+        assert_eq!(commit_count(tmp.path()), before, "commit=false should skip");
     }
 
     #[tokio::test]

@@ -334,6 +334,201 @@ pub fn pull_rebase(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
+// ─── High-level auto-commit policy (CLI / MCP shared) ───────────────────────
+
+/// Action recorded in the conventional-commit subject. The string forms
+/// (`"create"`, `"update"`, `"append"`, `"upsert"`, `"ingest"`) match the
+/// terms specified in issue #38.
+#[derive(Debug, Clone, Copy)]
+pub enum CommitAction {
+    Create,
+    Update,
+    Append,
+    Upsert,
+    Ingest,
+}
+
+impl CommitAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            CommitAction::Create => "create",
+            CommitAction::Update => "update",
+            CommitAction::Append => "append",
+            CommitAction::Upsert => "upsert",
+            CommitAction::Ingest => "ingest",
+        }
+    }
+}
+
+/// Caller-supplied options for `auto_commit`.
+///
+/// `commit` and `push` use bare `bool` (not `Option<bool>`) — the CLI / MCP
+/// layer is responsible for converting their CLI flags / MCP args into a
+/// concrete decision before calling here.
+#[derive(Debug)]
+pub struct AutoCommitOpts<'a> {
+    pub commit: bool,
+    pub push: bool,
+    pub author: Option<&'a str>,
+    pub source: Option<&'a str>,
+    /// Generator string injected into the commit body, e.g.
+    /// `env!("CARGO_PKG_VERSION")` from the call site. Stored verbatim
+    /// after `generator: lw v`.
+    pub generator_version: &'a str,
+}
+
+/// Outcome surfaced back to the CLI/MCP layer for user-facing messaging.
+#[derive(Debug, Default)]
+pub struct AutoCommitOutcome {
+    /// True iff a new commit was created.
+    pub committed: bool,
+    /// True iff `git push` was invoked successfully.
+    pub pushed: bool,
+    /// `Some(_)` when the working tree had uncommitted changes outside
+    /// the paths that were just written. The string is suitable for
+    /// printing to stderr.
+    pub dirty_warning: Option<String>,
+}
+
+/// Build the conventional-commit subject + body for an auto-commit.
+///
+/// Subject: `docs(wiki): <action> <page-slug>`.
+/// Body lines: `generator: lw v<X.Y.Z>`, optional `author:`, optional
+/// `source:`. Per the issue spec these go in the *trailer* of the body.
+pub fn build_commit_message(
+    action: CommitAction,
+    page_slug: &str,
+    opts: &AutoCommitOpts<'_>,
+) -> String {
+    let mut msg = format!("docs(wiki): {} {}\n\n", action.as_str(), page_slug);
+    msg.push_str(&format!("generator: lw v{}\n", opts.generator_version));
+    if let Some(a) = opts.author {
+        msg.push_str(&format!("author: {a}\n"));
+    }
+    if let Some(s) = opts.source {
+        msg.push_str(&format!("source: {s}\n"));
+    }
+    msg
+}
+
+/// Run the auto-commit policy: optionally commit `paths`, optionally push.
+///
+/// Behavior at a glance (matches issue #38 acceptance criteria):
+/// - If `repo_root` is not a git repo → returns Ok(default) with
+///   `committed = false`. No error.
+/// - If `opts.commit == false` → also Ok(default), no commit.
+/// - If the working tree has dirty files OUTSIDE the supplied paths,
+///   `dirty_warning` is set. The commit still happens (issue spec: warn,
+///   don't error) and only includes the supplied paths.
+/// - If `opts.push == true` and the commit succeeded, also runs
+///   `git push`. A push failure surfaces as `WikiError::Git` so the
+///   caller can show it; the commit is *not* rolled back.
+///
+/// `paths` are interpreted by `commit_paths` — see that function for the
+/// path-resolution rules.
+#[tracing::instrument(skip(paths, opts))]
+pub fn auto_commit(
+    repo_root: &Path,
+    paths: &[PathBuf],
+    action: CommitAction,
+    page_slug: &str,
+    opts: AutoCommitOpts<'_>,
+) -> Result<AutoCommitOutcome> {
+    let mut outcome = AutoCommitOutcome::default();
+
+    // Non-git directories are a graceful no-op (acceptance criterion 7).
+    if !is_git_repo(repo_root) {
+        return Ok(outcome);
+    }
+
+    // Caller asked us not to commit (acceptance criterion 3).
+    if !opts.commit {
+        return Ok(outcome);
+    }
+
+    // Detect "dirty elsewhere" before staging our paths. This is a
+    // best-effort check — the commit still proceeds either way.
+    if let Some(warning) = dirty_elsewhere_warning(repo_root, paths) {
+        outcome.dirty_warning = Some(warning);
+    }
+
+    let message = build_commit_message(action, page_slug, &opts);
+    commit_paths(repo_root, paths, &message, opts.author)?;
+    outcome.committed = true;
+
+    if opts.push {
+        push(repo_root, false)?;
+        outcome.pushed = true;
+    }
+
+    Ok(outcome)
+}
+
+/// Compose the dirty-elsewhere warning, if any. Compares
+/// `git status --porcelain` against the supplied paths and returns
+/// `Some(message)` when there are dirty files that aren't being committed.
+fn dirty_elsewhere_warning(repo_root: &Path, paths: &[PathBuf]) -> Option<String> {
+    let toplevel = resolve_toplevel(repo_root).ok()?;
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&toplevel)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.is_empty() {
+        return None;
+    }
+
+    // Normalise our supplied paths to plain string suffixes for matching
+    // against `git status` output.
+    let our_paths: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    let mut other_dirty: Vec<String> = Vec::new();
+    for line in stdout.lines() {
+        // `git status --porcelain` lines look like `XY <path>` (rename uses
+        // `XY <old> -> <new>`). Strip the 2 status chars + 1 space.
+        let path_part = line.get(3..).unwrap_or("").trim();
+        if path_part.is_empty() {
+            continue;
+        }
+        // Naive check: skip if any of our supplied paths matches the trailing
+        // segment of the dirty path (or vice versa). Covers both repo-relative
+        // and toplevel-relative names.
+        let ours = our_paths.iter().any(|p| {
+            path_part == p
+                || path_part.ends_with(&format!("/{p}"))
+                || p.ends_with(&format!("/{path_part}"))
+        });
+        if !ours {
+            other_dirty.push(path_part.to_string());
+        }
+    }
+
+    if other_dirty.is_empty() {
+        return None;
+    }
+    let preview = other_dirty
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let extra = if other_dirty.len() > 3 {
+        format!(" (+{} more)", other_dirty.len() - 3)
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "warning: working tree has uncommitted changes elsewhere ({preview}{extra}); only the wiki page was committed"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

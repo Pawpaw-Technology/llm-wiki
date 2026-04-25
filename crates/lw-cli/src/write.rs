@@ -1,8 +1,18 @@
+use crate::git_commit::{AutoCommitFlags, run_auto_commit};
 use lw_core::fs::{atomic_write, validate_wiki_path, write_page};
+use lw_core::git::CommitAction;
 use lw_core::page::Page;
 use lw_core::section;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Auto-commit options forwarded from the CLI parser.
+pub struct CommitOpts {
+    pub no_commit: bool,
+    pub push: bool,
+    pub author: Option<String>,
+    pub source: Option<String>,
+}
 
 pub fn run(
     root: &Path,
@@ -11,6 +21,7 @@ pub fn run(
     section_name: &Option<String>,
     content: &Option<String>,
     stdin_available: bool,
+    commit_opts: CommitOpts,
 ) -> Result<(), anyhow::Error> {
     let abs_path = validate_wiki_path(root, path)?;
 
@@ -31,11 +42,23 @@ pub fn run(
         }
     };
 
+    // Track the action for the commit message — must be picked before the
+    // mode strings get matched, so we don't have to repeat the table.
+    let action = match mode {
+        "overwrite" => CommitAction::Update,
+        "append" | "append_section" => CommitAction::Append,
+        "upsert" | "upsert_section" => CommitAction::Upsert,
+        _ => CommitAction::Update, // unreachable after the match below
+    };
+
+    let mut wrote_anything = false;
+
     match mode {
         "overwrite" => {
             let page = Page::parse(&resolved_content)?;
             write_page(&abs_path, &page)?;
             eprintln!("Wrote: {path}");
+            wrote_anything = true;
         }
         "append" | "append_section" => {
             let section_name = require_section(section_name, mode)?;
@@ -43,7 +66,10 @@ pub fn run(
                 section::apply_append(body, section_name, &resolved_content)
             })?;
             match result {
-                Some(r) => report_section_result(&r, section_name, path, "Appended to"),
+                Some(r) => {
+                    report_section_result(&r, section_name, path, "Appended to");
+                    wrote_anything = true;
+                }
                 None => eprintln!("Empty content, nothing to append."),
             }
         }
@@ -53,13 +79,38 @@ pub fn run(
                 Some(section::apply_upsert(body, section_name, &resolved_content))
             })?;
             match result {
-                Some(r) => report_section_result(&r, section_name, path, "Replaced"),
+                Some(r) => {
+                    report_section_result(&r, section_name, path, "Replaced");
+                    wrote_anything = true;
+                }
                 None => unreachable!("upsert always returns a result"),
             }
         }
         other => {
             anyhow::bail!("Unknown mode: '{other}'. Use 'overwrite', 'append', or 'upsert'.");
         }
+    }
+
+    // Auto-commit only when something actually hit disk. An empty append
+    // is a no-op for both the file and git.
+    if wrote_anything {
+        let rel_for_commit: PathBuf = match abs_path.strip_prefix(root) {
+            Ok(p) => p.to_path_buf(),
+            Err(_) => abs_path.clone(),
+        };
+        let display_path = rel_for_commit.to_string_lossy().into_owned();
+        run_auto_commit(
+            root,
+            std::slice::from_ref(&rel_for_commit),
+            action,
+            &display_path,
+            AutoCommitFlags {
+                no_commit: commit_opts.no_commit,
+                push: commit_opts.push,
+                author: commit_opts.author.as_deref(),
+                source: commit_opts.source.as_deref(),
+            },
+        )?;
     }
 
     Ok(())
