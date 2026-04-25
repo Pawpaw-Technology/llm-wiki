@@ -207,6 +207,47 @@ pub fn canonicalize_ancestor(path: &Path) -> PathBuf {
     result
 }
 
+/// Request parameters for creating a new wiki page.
+pub struct NewPageRequest<'a> {
+    pub category: &'a str,
+    pub slug: &'a str,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub author: Option<String>,
+}
+
+/// Create a new wiki page with schema-enforced frontmatter and body template.
+///
+/// Validates the slug, checks the category against the schema, enforces required
+/// fields, refuses to overwrite an existing file, then calls `write_page` (which
+/// uses `atomic_write` internally).
+///
+/// # Errors
+///
+/// - `InvalidSlug` — slug is empty, contains `/` or `..`, starts with `.`, or
+///   contains characters outside `[a-z0-9_-]`
+/// - `UnknownCategory` — category is not `_uncategorized` and not listed in
+///   `schema.tags.categories`
+/// - `MissingRequiredField` — a field declared in the category's `required_fields`
+///   is not satisfied by the request
+/// - `PageAlreadyExists` — a file already exists at the computed path
+///
+/// # Stub (RED state)
+///
+/// This stub always returns `Err(WikiError::InvalidSlug)` so that happy-path
+/// tests fail at runtime while the project compiles. Replace with the real
+/// implementation in the GREEN commit.
+#[tracing::instrument(skip_all)]
+pub fn new_page(
+    _wiki_root: &Path,
+    _schema: &WikiSchema,
+    req: NewPageRequest<'_>,
+) -> Result<(PathBuf, Page)> {
+    Err(WikiError::InvalidSlug {
+        slug: req.slug.to_string(),
+    })
+}
+
 /// Walk up from `start` to find the wiki root (directory containing `.lw/schema.toml`).
 /// Similar to how git finds `.git/`.
 #[tracing::instrument]
