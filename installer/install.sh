@@ -217,10 +217,15 @@ fi
 
 # --- Optional integration ---------------------------------------------------
 
+default_prefix="${HOME:-}/.llm-wiki"
 if [ "$LW_NO_INTEGRATE" -eq 1 ]; then
   :
-elif [ "$LW_YES" -eq 1 ]; then
+elif [ "$LW_YES" -eq 1 ] && [ "$LW_INSTALL_PREFIX" = "$default_prefix" ]; then
   "$LW_INSTALL_PREFIX/bin/lw" integrate --auto --yes || true
+elif [ "$LW_YES" -eq 1 ]; then
+  echo "Skipping auto-integration: custom install prefix ($LW_INSTALL_PREFIX)."
+  echo "  (Custom-prefix installs do not write to user-level agent config to keep uninstall reversible.)"
+  echo "  Run 'lw integrate <tool>' manually if you want integration."
 elif [ "$IS_TTY" -eq 1 ]; then
   # Detect available tools, suggest commands
   AVAIL=""
@@ -230,6 +235,9 @@ elif [ "$IS_TTY" -eq 1 ]; then
   AVAIL=$(echo "$AVAIL" | sed 's/^ //')
   if [ -n "$AVAIL" ]; then
     echo ""
+    if [ "$LW_INSTALL_PREFIX" != "$default_prefix" ]; then
+      echo "Note: running under a custom prefix ($LW_INSTALL_PREFIX); 'lw integrate' will write to user-level agent config."
+    fi
     echo "Detected agent tools:${AVAIL}"
     echo "Wire them up with: lw integrate --auto"
     echo "(Pass --yes during install to do this automatically.)"
