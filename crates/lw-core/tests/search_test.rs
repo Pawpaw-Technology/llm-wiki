@@ -1,6 +1,6 @@
+use lw_core::WikiError;
 use lw_core::page::Page;
 use lw_core::search::{SearchQuery, Searcher, TantivySearcher};
-use lw_core::WikiError;
 use tempfile::TempDir;
 
 fn make_page(title: &str, tags: &[&str], body: &str) -> (String, Page) {
