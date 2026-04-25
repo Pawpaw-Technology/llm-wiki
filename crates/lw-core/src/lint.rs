@@ -34,6 +34,11 @@ pub struct LintReport {
     pub orphan_pages: Vec<LintFinding>,
     pub missing_concepts: Vec<LintFinding>,
     pub freshness: FreshnessReport,
+    /// Journal pages whose last git commit is older than the threshold
+    /// configured via `[journal] stale_after_days = N` (default 7 days).
+    /// Issue #37: signals captures that haven't been triaged.
+    #[serde(default)]
+    pub stale_journal_pages: Vec<LintFinding>,
 }
 
 /// Run all lint checks on the wiki at `root`.
@@ -172,5 +177,6 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
             stale: freshness_stale,
             stale_pages,
         },
+        stale_journal_pages: Vec::new(),
     })
 }

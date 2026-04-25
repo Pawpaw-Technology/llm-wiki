@@ -201,6 +201,70 @@ template = ""
     assert!(notes.required_fields.is_empty());
 }
 
+// ── Journal config (issue #37) ───────────────────────────────────────────────
+
+/// `_journal` must be in the default schema's category list so `lw init`
+/// scaffolds the directory.
+#[test]
+fn default_schema_includes_journal_category() {
+    let schema = WikiSchema::default();
+    assert!(
+        schema.tags.categories.iter().any(|c| c == "_journal"),
+        "default schema must include `_journal` in categories: {:?}",
+        schema.tags.categories
+    );
+}
+
+/// `[categories._journal]` must come pre-populated with a journal-friendly
+/// template. The template doesn't need any required_fields (those would
+/// fight the journal-as-inbox UX).
+#[test]
+fn default_schema_has_journal_category_block() {
+    let schema = WikiSchema::default();
+    let cfg = schema
+        .category_config("_journal")
+        .expect("_journal must have a [categories._journal] block in default schema");
+    assert!(
+        cfg.required_fields.is_empty(),
+        "journal must not impose required_fields (captures should be frictionless)"
+    );
+}
+
+/// Schema parses a `[journal] stale_after_days = N` block and the helper
+/// returns it.
+#[test]
+fn parse_journal_block_with_stale_after_days() {
+    let toml_str = r#"
+[wiki]
+name = "Journal Wiki"
+default_review_days = 90
+
+[tags]
+categories = ["_journal"]
+
+[journal]
+stale_after_days = 14
+"#;
+    let schema = WikiSchema::parse(toml_str).unwrap();
+    assert_eq!(
+        schema.journal_stale_after_days(),
+        14,
+        "parser must surface custom stale_after_days"
+    );
+}
+
+/// When `[journal]` is absent, `journal_stale_after_days()` returns the
+/// documented default (7).
+#[test]
+fn journal_stale_after_days_defaults_to_7() {
+    let schema = WikiSchema::default();
+    assert_eq!(
+        schema.journal_stale_after_days(),
+        7,
+        "default stale_after_days must be 7"
+    );
+}
+
 /// Edge case: CategoryConfig with empty required_fields (default).
 #[test]
 fn category_config_empty_required_fields_default() {

@@ -1,3 +1,4 @@
+mod capture;
 mod config;
 mod doctor;
 mod git_commit;
@@ -251,6 +252,30 @@ enum Commands {
         /// Force-push with lease (after the rebase)
         #[arg(long)]
         force: bool,
+    },
+
+    /// Append a quick-capture entry to today's journal (wiki/_journal/YYYY-MM-DD.md)
+    #[command(
+        after_help = "Examples:\n  lw capture \"comrak round-trips markdown via arena AST\"\n  lw capture --tag rust --tag markdown \"see docs.rs/comrak\"\n  lw capture --source \"https://example.com/article\" \"key insight\"\n  lw capture --no-commit \"draft thought, don't commit yet\""
+    )]
+    Capture {
+        /// Capture text. Wrap multi-word content in quotes.
+        content: String,
+        /// Tag to attach to the capture line (`#tag`). Repeatable.
+        #[arg(long)]
+        tag: Vec<String>,
+        /// Source URL/identifier rendered as `([source](URL))` at end of line.
+        #[arg(long)]
+        source: Option<String>,
+        /// Skip the auto-commit that normally follows a capture
+        #[arg(long)]
+        no_commit: bool,
+        /// Also `git push` after committing
+        #[arg(long)]
+        push: bool,
+        /// Override commit author as `"Name <email>"`
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Manage registered wiki workspaces (Obsidian-style vaults)
@@ -567,6 +592,30 @@ fn main() {
         },
         Commands::Sync { force } => match resolve_root(cli.root) {
             Ok(root) => sync::run(&root, force),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::Capture {
+            content,
+            tag,
+            source,
+            no_commit,
+            push,
+            author,
+        } => match resolve_root(cli.root) {
+            Ok(root) => capture::run(
+                &root,
+                &content,
+                tag,
+                source,
+                capture::CommitOpts {
+                    no_commit,
+                    push,
+                    author,
+                },
+            ),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
