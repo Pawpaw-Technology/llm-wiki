@@ -7,6 +7,7 @@ mod install_prefix;
 mod integrate;
 mod integrations;
 mod lint;
+mod new;
 mod output;
 mod query;
 mod read;
@@ -168,6 +169,27 @@ enum Commands {
     /// Start MCP server (stdio)
     #[command(after_help = "Examples:\n  lw serve\n  lw serve --root /path/to/wiki")]
     Serve,
+
+    /// Create a new wiki page with schema-enforced frontmatter and body template
+    #[command(
+        after_help = "Examples:\n  lw new tools/comrak-ast-parser --title \"Comrak AST Parser\" --tags rust,markdown,parsing\n  lw new tools/foo --title \"Foo\" --tags a,b --format json\n  lw new architecture/transformer --title \"Transformer\" --tags ml,architecture --author alice"
+    )]
+    New {
+        /// Page path as \"<category>/<slug>\" (e.g. tools/comrak-ast-parser)
+        path: String,
+        /// Page title
+        #[arg(long)]
+        title: Option<String>,
+        /// Tags (comma-separated, e.g. rust,markdown,parsing)
+        #[arg(long)]
+        tags: Option<String>,
+        /// Author name
+        #[arg(long)]
+        author: Option<String>,
+        /// Output format
+        #[arg(short = 'o', long, default_value = "human")]
+        format: Format,
+    },
 
     /// Write or update a wiki page (overwrite, append to section, or upsert section)
     #[command(
@@ -424,6 +446,19 @@ fn main() {
         },
         Commands::Serve => match resolve_root(cli.root) {
             Ok(root) => serve::run(&root),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        },
+        Commands::New {
+            path,
+            title,
+            tags,
+            author,
+            format,
+        } => match resolve_root(cli.root) {
+            Ok(root) => new::run(&root, &path, title, tags, author, &format),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);
