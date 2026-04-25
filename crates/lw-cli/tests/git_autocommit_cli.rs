@@ -407,6 +407,7 @@ fn lw_new_outside_git_repo_skips_silently() {
 fn lw_new_with_dirty_tree_warns_but_succeeds() {
     let tmp = setup_wiki_with_tools_category();
     let root = tmp.path();
+    let before = commit_count(root);
 
     // Create unrelated dirty file (not staged).
     fs::write(root.join("dirty.txt"), "junk").unwrap();
@@ -431,6 +432,15 @@ fn lw_new_with_dirty_tree_warns_but_succeeds() {
         "stderr should warn about dirty tree; got: {stderr}"
     );
 
+    // Critical: the wiki page commit MUST still happen — a regression
+    // that silently skipped the commit on a dirty tree would otherwise
+    // pass this test.
+    assert_eq!(
+        commit_count(root),
+        before + 1,
+        "lw new must still create exactly one commit even with a dirty tree elsewhere"
+    );
+
     // The unrelated file must still be untracked — auto-commit must have
     // limited itself to the wiki page.
     let status = StdCommand::new("git")
@@ -443,6 +453,79 @@ fn lw_new_with_dirty_tree_warns_but_succeeds() {
         s.contains("dirty.txt"),
         "dirty.txt must remain dirty after lw new; got: {s}"
     );
+}
+
+// ─── wiki_root != git_toplevel: commit lands at outer repo with subdir path ─
+
+#[test]
+fn lw_new_when_wiki_is_subdir_of_outer_repo_commits_at_outer_root() {
+    // Outer git repo with `wiki-vault/` as a subdir.
+    let tmp = TempDir::new().unwrap();
+    let outer = tmp.path();
+    init_repo(outer);
+    // Seed an outer-root commit so HEAD exists.
+    fs::write(outer.join("README.md"), "outer").unwrap();
+    StdCommand::new("git")
+        .args(["add", "README.md"])
+        .current_dir(outer)
+        .output()
+        .unwrap();
+    StdCommand::new("git")
+        .args(["commit", "-m", "outer seed"])
+        .current_dir(outer)
+        .output()
+        .unwrap();
+    let before = commit_count(outer);
+
+    // lw init the subdir as the wiki root.
+    let vault = outer.join("wiki-vault");
+    fs::create_dir_all(&vault).unwrap();
+    lw().args(["init", "--root", vault.to_str().unwrap()])
+        .assert()
+        .success();
+    // Schema with a `tools` category for `lw new`.
+    let schema_toml = "[wiki]\nname = \"Test Wiki\"\ndefault_review_days = 90\n\n[tags]\ncategories = [\"tools\"]\n\n[categories.tools]\nrequired_fields = [\"title\", \"tags\"]\ntemplate = \"## Overview\\n\"\n";
+    fs::write(vault.join(".lw/schema.toml"), schema_toml).unwrap();
+
+    // Now `lw new` against the subdir wiki root.
+    lw().args([
+        "new",
+        "tools/sub-page",
+        "--title",
+        "Sub Page",
+        "--tags",
+        "x",
+        "--root",
+        vault.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+
+    // Commit must have landed at the OUTER root (single git history).
+    assert_eq!(
+        commit_count(outer),
+        before + 1,
+        "outer repo must have exactly one new commit"
+    );
+
+    // The commit must include the toplevel-relative path
+    // `wiki-vault/wiki/tools/sub-page.md`, NOT the wiki-relative
+    // `wiki/tools/sub-page.md`.
+    let names = StdCommand::new("git")
+        .args(["log", "-1", "--name-only", "--format="])
+        .current_dir(outer)
+        .output()
+        .unwrap();
+    let listing = String::from_utf8_lossy(&names.stdout);
+    assert!(
+        listing
+            .lines()
+            .any(|l| l.trim() == "wiki-vault/wiki/tools/sub-page.md"),
+        "commit at outer root should include wiki-vault/wiki/tools/sub-page.md; got: {listing}"
+    );
+
+    // File exists where we expect.
+    assert!(vault.join("wiki/tools/sub-page.md").exists());
 }
 
 // ─── lw new --push pushes to remote ──────────────────────────────────────────

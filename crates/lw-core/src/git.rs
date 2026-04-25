@@ -882,4 +882,133 @@ mod tests {
 
         assert!(clone_a.path().join("two.txt").exists());
     }
+
+    // ─── Reviewer-flagged fix: --author "Name Only" (no <email>) ─────────────
+    //
+    // Git rejects `--author "Just A Name"` with
+    //   fatal: --author 'Just A Name' is not 'Name <email>' …
+    // and exits 128. `commit_paths` was passing the user's literal
+    // `Name Only` straight through. The fix is to synthesize a
+    // `Name <email>` form (matching `parse_author`'s placeholder email)
+    // before handing the string to `git commit --author=`.
+
+    #[test]
+    fn commit_paths_with_name_only_author_synthesizes_email() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+
+        fs::write(root.join("auth.md"), "x").unwrap();
+
+        // Caller supplied a bare name — no `<email>`. Must NOT fail.
+        commit_paths(
+            root,
+            &[PathBuf::from("auth.md")],
+            "docs(wiki): create auth.md",
+            Some("Just A Name"),
+        )
+        .expect("commit must succeed even when --author has no <email>");
+
+        // The committed author should be the synthesized full form
+        // (name + placeholder email matching parse_author).
+        let log = Command::new("git")
+            .args(["log", "-1", "--format=%an <%ae>"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let line = String::from_utf8_lossy(&log.stdout);
+        let trimmed = line.trim();
+        assert!(
+            trimmed.starts_with("Just A Name <") && trimmed.ends_with('>'),
+            "synthesized author should be 'Just A Name <some-email>'; got: {trimmed}"
+        );
+    }
+
+    // ─── Reviewer-flagged fix: wiki_root != git_toplevel path resolution ─────
+    //
+    // When the wiki root is a subdir of a larger repo, the CLI/MCP layer
+    // strips `wiki_root` from the absolute page path, producing a
+    // *wiki-relative* path. `commit_paths` was running `git add` from the
+    // git toplevel with that relative path, which never resolves. The fix
+    // is to accept absolute paths and re-strip them against the actual
+    // git toplevel inside `commit_paths` itself.
+
+    #[test]
+    fn commit_paths_handles_wiki_subdir_of_outer_repo() {
+        // Outer git repo has `vault/` as a subdir; wiki lives at vault/.
+        let tmp = TempDir::new().unwrap();
+        let outer = tmp.path();
+        init_repo(outer);
+
+        // Seed an outer-root commit so HEAD exists for diff checks.
+        fs::write(outer.join("seed.md"), "seed").unwrap();
+        Command::new("git")
+            .args(["add", "seed.md"])
+            .current_dir(outer)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "seed"])
+            .current_dir(outer)
+            .output()
+            .unwrap();
+
+        // Wiki root inside the outer repo.
+        let vault = outer.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let page_abs = vault.join("page.md");
+        fs::write(&page_abs, "page body").unwrap();
+
+        // Pass the ABSOLUTE page path. commit_paths must figure out
+        // the toplevel-relative form internally.
+        commit_paths(
+            &vault,
+            &[page_abs.clone()],
+            "docs(wiki): create vault/page.md",
+            None,
+        )
+        .expect("commit_paths must succeed when wiki root is a subdir");
+
+        // Verify a new commit exists at the OUTER toplevel and contains
+        // the toplevel-relative path `vault/page.md`.
+        let log_files = Command::new("git")
+            .args(["log", "-1", "--name-only", "--format="])
+            .current_dir(outer)
+            .output()
+            .unwrap();
+        let names = String::from_utf8_lossy(&log_files.stdout);
+        assert!(
+            names.lines().any(|l| l.trim() == "vault/page.md"),
+            "commit should include toplevel-relative path vault/page.md; got: {names}"
+        );
+    }
+
+    #[test]
+    fn commit_paths_accepts_repo_relative_path_when_root_is_toplevel() {
+        // Regression guard: existing repo-relative callers must still work.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+
+        fs::write(root.join("note.md"), "n").unwrap();
+
+        commit_paths(
+            root,
+            &[PathBuf::from("note.md")],
+            "docs(wiki): create note.md",
+            None,
+        )
+        .expect("repo-relative path at toplevel must still work");
+
+        let log = Command::new("git")
+            .args(["log", "-1", "--name-only", "--format="])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let names = String::from_utf8_lossy(&log.stdout);
+        assert!(
+            names.lines().any(|l| l.trim() == "note.md"),
+            "expected note.md in commit; got: {names}"
+        );
+    }
 }

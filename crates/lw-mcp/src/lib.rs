@@ -1404,4 +1404,118 @@ mod tests {
             "must not init git on the user's behalf"
         );
     }
+
+    // ─── Reviewer-flagged fix: dirty-tree warning must surface in JSON ────────
+    //
+    // The dirty-tree warning was previously fired only via `tracing::warn!`,
+    // which goes to stderr where the agent never sees it. The JSON response
+    // must carry a `warnings` field so the agent can show it to the user.
+
+    #[tokio::test]
+    async fn wiki_write_dirty_tree_returns_warnings_field_in_json() {
+        let (tmp, server) = spawn_server_in_git();
+
+        // Create an unrelated dirty file before the wiki write.
+        std::fs::write(tmp.path().join("dirty.txt"), "junk").unwrap();
+
+        let args = WikiWriteArgs {
+            path: "architecture/dirty-warn.md".to_string(),
+            content: "---\ntitle: DirtyWarn\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: None,
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+        assert_eq!(v["status"], "ok", "wiki_write should succeed; got: {resp}");
+
+        // The response must include a warnings array surfacing the dirty
+        // working tree to the agent.
+        let warnings = v["warnings"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected warnings array in response: {resp}"));
+        assert!(
+            !warnings.is_empty(),
+            "warnings should be populated when working tree is dirty: {resp}"
+        );
+        let joined = warnings
+            .iter()
+            .map(|w| w.as_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            joined.to_lowercase().contains("dirty")
+                || joined.to_lowercase().contains("uncommitted"),
+            "warning should mention dirty/uncommitted; got: {joined}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wiki_write_clean_tree_omits_warnings_field() {
+        // Sanity check: when there are no dirty files, the warnings array
+        // must be absent or empty so agents don't see noise.
+        let (_tmp, server) = spawn_server_in_git();
+
+        let args = WikiWriteArgs {
+            path: "architecture/clean.md".to_string(),
+            content: "---\ntitle: Clean\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: None,
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+        assert_eq!(v["status"], "ok", "wiki_write should succeed; got: {resp}");
+
+        let no_warnings = match v.get("warnings") {
+            None => true,
+            Some(arr) => arr.as_array().map(|a| a.is_empty()).unwrap_or(false),
+        };
+        assert!(
+            no_warnings,
+            "clean tree must not produce warnings; got: {resp}"
+        );
+    }
+
+    // ─── Reviewer-flagged fix: assert generator metadata in MCP test ─────────
+    //
+    // Strengthen the existing wiki_write auto-commit test by asserting the
+    // commit body contains the `generator: lw v…` line.
+
+    #[tokio::test]
+    async fn wiki_write_auto_commit_body_records_generator_metadata() {
+        let (tmp, server) = spawn_server_in_git();
+
+        let args = WikiWriteArgs {
+            path: "architecture/gen.md".to_string(),
+            content: "---\ntitle: Gen\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: None,
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+        assert_eq!(v["status"], "ok", "wiki_write should succeed; got: {resp}");
+
+        use std::process::Command as StdCommand;
+        let body = StdCommand::new("git")
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let body_str = String::from_utf8_lossy(&body.stdout);
+        assert!(
+            body_str.contains("generator: lw v"),
+            "commit body must contain 'generator: lw v…'; got: {body_str}"
+        );
+    }
 }
