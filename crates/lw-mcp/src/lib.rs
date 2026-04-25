@@ -594,9 +594,40 @@ impl WikiMcpServer {
         description = "Create a new wiki page with schema-enforced frontmatter and body template. Returns the full rendered page content so agents can immediately follow up with wiki_write section calls. Errors if the category is unknown or the slug already exists."
     )]
     fn wiki_new(&self, Parameters(args): Parameters<WikiNewArgs>) -> String {
-        // RED stub — replaced in GREEN
-        let _ = (&args.category, &args.slug, &args.title, &args.tags, &args.author);
-        serde_json::json!({"error": "wiki_new not implemented (RED stub)"}).to_string()
+        let req = NewPageRequest {
+            category: &args.category,
+            slug: &args.slug,
+            title: args.title,
+            tags: args.tags,
+            author: args.author,
+        };
+        match new_page(&self.wiki_root, &self.schema, req) {
+            Ok((abs_path, page)) => {
+                let content = page.to_markdown();
+
+                // Index the new page so wiki_query can find it immediately.
+                let rel_path = abs_path
+                    .strip_prefix(&self.wiki_root)
+                    .unwrap_or(&abs_path)
+                    .to_string_lossy()
+                    .to_string();
+                if let Err(e) = self.searcher.index_page(&rel_path, &page) {
+                    tracing::warn!("Failed to index new page {}: {}", rel_path, e);
+                }
+                if let Err(e) = self.searcher.commit() {
+                    tracing::warn!("Failed to commit index after wiki_new: {}", e);
+                }
+
+                serde_json::json!({
+                    "path": rel_path,
+                    "category": args.category,
+                    "slug": args.slug,
+                    "content": content,
+                })
+                .to_string()
+            }
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
     }
 
     /// Get wiki health statistics: page count, category breakdown, freshness distribution.
@@ -882,9 +913,7 @@ mod tests {
         );
 
         // File exists on disk
-        let expected = tmp
-            .path()
-            .join("wiki/tools/comrak-ast-parser.md");
+        let expected = tmp.path().join("wiki/tools/comrak-ast-parser.md");
         assert!(expected.exists(), "file not created at {expected:?}");
     }
 
@@ -896,14 +925,19 @@ mod tests {
         // First call succeeds
         let resp1 = server.wiki_new(Parameters(args));
         let v1 = parse(&resp1);
-        assert!(v1.get("error").is_none(), "first call should succeed: {resp1}");
+        assert!(
+            v1.get("error").is_none(),
+            "first call should succeed: {resp1}"
+        );
 
         // Second call with same args
         let args2 = new_args("tools", "dup-slug", "Dup Slug", vec![], None);
         let resp2 = server.wiki_new(Parameters(args2));
         let v2 = parse(&resp2);
 
-        let msg = v2["error"].as_str().expect("expected error field on duplicate");
+        let msg = v2["error"]
+            .as_str()
+            .expect("expected error field on duplicate");
         assert!(
             msg.starts_with("page already exists:"),
             "error should be 'page already exists: ...', got: {msg}"
@@ -918,7 +952,9 @@ mod tests {
         let resp = server.wiki_new(Parameters(args));
         let v = parse(&resp);
 
-        let msg = v["error"].as_str().expect("expected error field for unknown category");
+        let msg = v["error"]
+            .as_str()
+            .expect("expected error field for unknown category");
         assert!(
             msg.starts_with("unknown category: bogus"),
             "error should start with 'unknown category: bogus', got: {msg}"
@@ -934,10 +970,7 @@ mod tests {
         lw_core::fs::init_wiki(tmp.path(), &WikiSchema::default()).unwrap();
         let server = WikiMcpServer::new(tmp.path().to_path_buf()).unwrap();
         let info = server.get_info();
-        let instructions = info
-            .instructions
-            .as_deref()
-            .unwrap_or("");
+        let instructions = info.instructions.as_deref().unwrap_or("");
         assert!(
             instructions.contains("wiki_new"),
             "with_instructions should mention wiki_new, got: {instructions}"
