@@ -76,6 +76,18 @@ pub struct WikiWriteArgs {
     /// Section name for append/upsert modes (case-insensitive, no ## prefix needed)
     #[serde(default)]
     pub section: Option<String>,
+    /// Auto-commit after write (default: true). Set to false to skip the commit.
+    #[serde(default)]
+    pub commit: Option<bool>,
+    /// Push after commit (default: false). Requires `commit` to be true.
+    #[serde(default)]
+    pub push: Option<bool>,
+    /// Override commit author as `"Name <email>"`.
+    #[serde(default)]
+    pub author: Option<String>,
+    /// Optional source URL/identifier recorded in the commit body as `source: <…>`.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 fn default_write_mode() -> String {
@@ -108,6 +120,18 @@ pub struct WikiIngestArgs {
     /// Target category
     #[serde(default)]
     pub category: Option<String>,
+    /// Auto-commit after ingest (default: true).
+    #[serde(default)]
+    pub commit: Option<bool>,
+    /// Push after commit (default: false).
+    #[serde(default)]
+    pub push: Option<bool>,
+    /// Override commit author as `"Name <email>"`.
+    #[serde(default)]
+    pub author: Option<String>,
+    /// Optional source URL/identifier recorded in the commit body.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 fn default_raw_type() -> String {
@@ -170,8 +194,18 @@ pub struct WikiNewArgs {
     /// Tags to attach to the page
     #[serde(default)]
     pub tags: Vec<String>,
-    /// Author name (optional)
+    /// Author name (optional). When set, used both as the page's `author`
+    /// frontmatter field AND as the commit author (`Name <email>` form).
     pub author: Option<String>,
+    /// Auto-commit after creation (default: true).
+    #[serde(default)]
+    pub commit: Option<bool>,
+    /// Push after commit (default: false).
+    #[serde(default)]
+    pub push: Option<bool>,
+    /// Optional source URL/identifier recorded in the commit body.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 // === Server ===
@@ -770,6 +804,10 @@ mod tests {
             title: title.map(String::from),
             tags: None,
             category: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
         }
     }
 
@@ -890,6 +928,12 @@ mod tests {
             title: title.to_string(),
             tags: tags.into_iter().map(String::from).collect(),
             author: author.map(String::from),
+            // Existing tests run against a non-git tempdir so commit must be
+            // disabled (or it would be a no-op anyway). Setting it explicitly
+            // to false keeps the original assertions stable.
+            commit: Some(false),
+            push: None,
+            source: None,
         }
     }
 
@@ -1024,6 +1068,210 @@ mod tests {
             hits.iter()
                 .any(|h| h["path"].as_str() == Some("tools/unique-foo-title.md")),
             "expected hit path 'tools/unique-foo-title.md', got {qresp}"
+        );
+    }
+
+    // ── git auto-commit tests (issue #38) ────────────────────────────────────
+
+    /// Spawn a server whose wiki root is *also* a fresh git repo with sane
+    /// identity config. Commits are seeded with the .lw scaffold so HEAD
+    /// exists and subsequent auto-commits aren't initial-commit edge cases.
+    fn spawn_server_in_git() -> (TempDir, WikiMcpServer) {
+        use std::process::Command as StdCommand;
+        let tmp = TempDir::new().unwrap();
+        init_wiki(tmp.path(), &WikiSchema::default()).unwrap();
+
+        StdCommand::new("git")
+            .args(["init", "--initial-branch=main"])
+            .current_dir(tmp.path())
+            .output()
+            .expect("git init");
+        StdCommand::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        StdCommand::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        StdCommand::new("git")
+            .args(["config", "commit.gpgsign", "false"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        StdCommand::new("git")
+            .args(["add", "."])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        StdCommand::new("git")
+            .args(["commit", "-m", "seed"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let server = WikiMcpServer::new(tmp.path().to_path_buf()).unwrap();
+        (tmp, server)
+    }
+
+    fn head_subject(repo: &std::path::Path) -> String {
+        use std::process::Command as StdCommand;
+        let out = StdCommand::new("git")
+            .args(["log", "-1", "--format=%s"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn commit_count(repo: &std::path::Path) -> u32 {
+        use std::process::Command as StdCommand;
+        let out = StdCommand::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn wiki_write_auto_commits_by_default() {
+        let (tmp, server) = spawn_server_in_git();
+        let before = commit_count(tmp.path());
+
+        let args = WikiWriteArgs {
+            path: "architecture/auto.md".to_string(),
+            content: "---\ntitle: Auto\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: None,
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+        assert_eq!(v["status"], "ok", "expected ok; got: {resp}");
+
+        assert_eq!(
+            commit_count(tmp.path()),
+            before + 1,
+            "wiki_write should auto-commit"
+        );
+        assert!(head_subject(tmp.path()).starts_with("docs(wiki): update"));
+    }
+
+    #[tokio::test]
+    async fn wiki_write_commit_false_skips_commit() {
+        let (tmp, server) = spawn_server_in_git();
+        let before = commit_count(tmp.path());
+
+        let args = WikiWriteArgs {
+            path: "architecture/no.md".to_string(),
+            content: "---\ntitle: No\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+        assert_eq!(v["status"], "ok", "expected ok; got: {resp}");
+
+        assert_eq!(
+            commit_count(tmp.path()),
+            before,
+            "commit=false should skip"
+        );
+    }
+
+    #[tokio::test]
+    async fn wiki_new_auto_commits_with_author() {
+        let (tmp, server) = spawn_server_in_git();
+        let before = commit_count(tmp.path());
+
+        let args = WikiNewArgs {
+            category: "tools".to_string(),
+            slug: "mcp-page".to_string(),
+            title: "MCP Page".to_string(),
+            tags: vec!["x".to_string()],
+            author: Some("Carol <carol@example.com>".to_string()),
+            commit: None,
+            push: None,
+            source: None,
+        };
+        let resp = server.wiki_new(Parameters(args));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "wiki_new error: {resp}");
+
+        assert_eq!(commit_count(tmp.path()), before + 1);
+        assert!(head_subject(tmp.path()).starts_with("docs(wiki): create"));
+
+        // Author should have been honored.
+        use std::process::Command as StdCommand;
+        let out = StdCommand::new("git")
+            .args(["log", "-1", "--format=%an <%ae>"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        let line = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(line.trim(), "Carol <carol@example.com>");
+    }
+
+    #[tokio::test]
+    async fn wiki_ingest_auto_commits() {
+        let (tmp, server) = spawn_server_in_git();
+        let before = commit_count(tmp.path());
+
+        let args = WikiIngestArgs {
+            source_path: None,
+            content: Some("# Pasted\n\nbody\n".to_string()),
+            filename: Some("pasted.md".to_string()),
+            raw_type: "articles".to_string(),
+            title: None,
+            tags: None,
+            category: None,
+            commit: None,
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_ingest(Parameters(args)).await;
+        let v = parse(&resp);
+        assert_eq!(v["status"], "ok", "ingest error: {resp}");
+
+        assert_eq!(commit_count(tmp.path()), before + 1);
+        assert!(head_subject(tmp.path()).starts_with("docs(wiki): ingest"));
+    }
+
+    #[tokio::test]
+    async fn wiki_write_outside_git_repo_succeeds_without_commit() {
+        // Plain wiki, NOT inside a git repo. Auto-commit must skip.
+        let (tmp, server) = spawn_server();
+        let args = WikiWriteArgs {
+            path: "architecture/no-git.md".to_string(),
+            content: "---\ntitle: NoGit\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: None,
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+        assert_eq!(v["status"], "ok", "wiki_write should succeed; got: {resp}");
+        assert!(tmp.path().join("wiki/architecture/no-git.md").exists());
+        assert!(
+            !tmp.path().join(".git").exists(),
+            "must not init git on the user's behalf"
         );
     }
 }
