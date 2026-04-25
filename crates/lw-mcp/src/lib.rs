@@ -2294,4 +2294,131 @@ mod tests {
         assert_eq!(hits[1]["title"], "Beta");
         assert_eq!(hits[2]["title"], "Charlie");
     }
+
+    /// Reviewer fix (#41): the MCP `wiki_query` handler used to call
+    /// `searcher.search()` and return whatever order Tantivy gave back, even
+    /// when `sort: "created_desc"` was requested. The search layer documents
+    /// date sorts as pass-through (it can't see git history) and the CLI
+    /// applies them post-hoc — but the MCP handler skipped that step. So
+    /// agents asking for "newest first" got BM25-ordered results silently.
+    /// This test creates 3 pages with controlled commit dates and verifies
+    /// `created_desc` returns them newest-first.
+    #[tokio::test]
+    async fn wiki_query_sort_created_desc_returns_newest_first() {
+        use std::process::Command as StdCommand;
+        let (tmp, server) = spawn_server_in_git();
+
+        // Helper: write file, stage it, and commit with controlled author/
+        // committer dates so `git log --format=%at` is deterministic.
+        let commit_at = |rel: &str, body: &str, ts: &str| {
+            std::fs::write(tmp.path().join(rel), body).unwrap();
+            StdCommand::new("git")
+                .args(["add", rel])
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+            StdCommand::new("git")
+                .args(["commit", "-m", &format!("add {rel}")])
+                .env("GIT_AUTHOR_DATE", ts)
+                .env("GIT_COMMITTER_DATE", ts)
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+        };
+
+        // Three commits, oldest → newest, ISO timestamps two days apart.
+        commit_at(
+            "wiki/tools/old.md",
+            "---\ntitle: Old\ntags: [t]\n---\n\noldest\n",
+            "2023-01-01T00:00:00Z",
+        );
+        commit_at(
+            "wiki/tools/middle.md",
+            "---\ntitle: Middle\ntags: [t]\n---\n\nmiddle\n",
+            "2024-06-15T00:00:00Z",
+        );
+        commit_at(
+            "wiki/tools/newest.md",
+            "---\ntitle: Newest\ntags: [t]\n---\n\nnewest\n",
+            "2025-12-31T00:00:00Z",
+        );
+
+        server.searcher.rebuild(&tmp.path().join("wiki")).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: Some("t".to_string()),
+            category: None,
+            status: None,
+            author: None,
+            sort: Some("created_desc".to_string()),
+            limit: Some(10),
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        let hits = v["hits"].as_array().expect("hits array");
+        assert_eq!(hits.len(), 3, "expected 3 hits, got {resp}");
+        assert_eq!(hits[0]["title"], "Newest", "newest first; got {resp}");
+        assert_eq!(hits[1]["title"], "Middle", "middle next; got {resp}");
+        assert_eq!(hits[2]["title"], "Old", "oldest last; got {resp}");
+    }
+
+    /// Sibling test for `created_asc` ordering, just so the bug doesn't come
+    /// back if someone fixes desc but forgets asc.
+    #[tokio::test]
+    async fn wiki_query_sort_created_asc_returns_oldest_first() {
+        use std::process::Command as StdCommand;
+        let (tmp, server) = spawn_server_in_git();
+
+        let commit_at = |rel: &str, body: &str, ts: &str| {
+            std::fs::write(tmp.path().join(rel), body).unwrap();
+            StdCommand::new("git")
+                .args(["add", rel])
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+            StdCommand::new("git")
+                .args(["commit", "-m", &format!("add {rel}")])
+                .env("GIT_AUTHOR_DATE", ts)
+                .env("GIT_COMMITTER_DATE", ts)
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+        };
+
+        commit_at(
+            "wiki/tools/c.md",
+            "---\ntitle: C\ntags: [t]\n---\n\nc\n",
+            "2025-12-31T00:00:00Z",
+        );
+        commit_at(
+            "wiki/tools/a.md",
+            "---\ntitle: A\ntags: [t]\n---\n\na\n",
+            "2023-01-01T00:00:00Z",
+        );
+        commit_at(
+            "wiki/tools/b.md",
+            "---\ntitle: B\ntags: [t]\n---\n\nb\n",
+            "2024-06-15T00:00:00Z",
+        );
+
+        server.searcher.rebuild(&tmp.path().join("wiki")).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: Some("t".to_string()),
+            category: None,
+            status: None,
+            author: None,
+            sort: Some("created_asc".to_string()),
+            limit: Some(10),
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        let hits = v["hits"].as_array().expect("hits array");
+        assert_eq!(hits.len(), 3, "expected 3 hits, got {resp}");
+        assert_eq!(hits[0]["title"], "A");
+        assert_eq!(hits[1]["title"], "B");
+        assert_eq!(hits[2]["title"], "C");
+    }
 }

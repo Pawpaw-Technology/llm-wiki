@@ -310,6 +310,104 @@ fn schema_version_mismatch_triggers_rebuild() {
     );
 }
 
+/// Reviewer fix (#41): the search layer used to call
+/// `Term::from_field_text(field, "")` whenever `Some("")` was passed for
+/// `status`/`author`/`category`, which yielded a term that matched nothing
+/// — so a CLI invocation like `lw query --status ""` or an MCP call with
+/// `{"status": ""}` returned zero results instead of behaving as "no
+/// filter". This test pins the safer behaviour: empty-string filters are
+/// treated as absent, identical to `None`.
+#[test]
+fn empty_string_status_filter_is_ignored() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+    let p1 = page_with("Draft", &[], Some("draft"), None, None, "draft body");
+    let p2 = page_with("Published", &[], Some("published"), None, None, "pub body");
+    searcher.index_page("tools/draft.md", &p1).unwrap();
+    searcher.index_page("tools/pub.md", &p2).unwrap();
+    searcher.commit().unwrap();
+
+    let no_filter = SearchQuery {
+        text: None,
+        tags: vec![],
+        category: None,
+        status: None,
+        author: None,
+        sort: SearchSort::Relevance,
+        limit: 10,
+    };
+    let baseline = searcher.search(&no_filter).unwrap().total;
+    assert_eq!(baseline, 2, "baseline: both pages should match");
+
+    let empty_filter = SearchQuery {
+        text: None,
+        tags: vec![],
+        category: None,
+        status: Some(String::new()),
+        author: None,
+        sort: SearchSort::Relevance,
+        limit: 10,
+    };
+    let with_empty = searcher.search(&empty_filter).unwrap().total;
+    assert_eq!(
+        with_empty, baseline,
+        "empty-string status filter must be ignored (treat as None), \
+         not match-nothing — got {with_empty} vs baseline {baseline}"
+    );
+}
+
+#[test]
+fn empty_string_author_filter_is_ignored() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+    let p1 = page_with("Alice", &[], None, Some("alice"), None, "alice body");
+    let p2 = page_with("Bob", &[], None, Some("bob"), None, "bob body");
+    searcher.index_page("tools/alice.md", &p1).unwrap();
+    searcher.index_page("tools/bob.md", &p2).unwrap();
+    searcher.commit().unwrap();
+
+    let q = SearchQuery {
+        text: None,
+        tags: vec![],
+        category: None,
+        status: None,
+        author: Some(String::new()),
+        sort: SearchSort::Relevance,
+        limit: 10,
+    };
+    let total = searcher.search(&q).unwrap().total;
+    assert_eq!(
+        total, 2,
+        "empty-string author filter must return all pages, not none"
+    );
+}
+
+#[test]
+fn empty_string_category_filter_is_ignored() {
+    let tmp = TempDir::new().unwrap();
+    let searcher = TantivySearcher::new(tmp.path()).unwrap();
+    let p1 = page_with("ToolsPage", &[], None, None, None, "tools body");
+    let p2 = page_with("ArchPage", &[], None, None, None, "arch body");
+    searcher.index_page("tools/tp.md", &p1).unwrap();
+    searcher.index_page("architecture/ap.md", &p2).unwrap();
+    searcher.commit().unwrap();
+
+    let q = SearchQuery {
+        text: None,
+        tags: vec![],
+        category: Some(String::new()),
+        status: None,
+        author: None,
+        sort: SearchSort::Relevance,
+        limit: 10,
+    };
+    let total = searcher.search(&q).unwrap().total;
+    assert_eq!(
+        total, 2,
+        "empty-string category filter must return all pages, not none"
+    );
+}
+
 #[test]
 fn search_filter_by_generator() {
     let tmp = TempDir::new().unwrap();
