@@ -253,6 +253,27 @@ pub struct WikiLintArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WikiCaptureArgs {
+    /// Capture text. Required, must be non-empty after trimming.
+    pub content: String,
+    /// Tags to render as `\`#tag\`` suffixes after the content.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Optional source URL/identifier rendered as `([source](URL))`.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Auto-commit the journal page after writing (default: true).
+    #[serde(default)]
+    pub commit: Option<bool>,
+    /// Push after commit (default: false). Requires `commit` to be true.
+    #[serde(default)]
+    pub push: Option<bool>,
+    /// Override commit author as `"Name <email>"`.
+    #[serde(default)]
+    pub author: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WikiNewArgs {
     /// Target category (must match a category in the schema, e.g. "tools")
     pub category: String,
@@ -765,12 +786,14 @@ impl WikiMcpServer {
                         "broken_related_count": report.broken_related.len(),
                         "orphan_count": report.orphan_pages.len(),
                         "missing_concept_count": report.missing_concepts.len(),
+                        "stale_journal_count": report.stale_journal_pages.len(),
                     },
                     "stale_pages": report.freshness.stale_pages,
                     "todo_pages": report.todo_pages,
                     "broken_related": report.broken_related,
                     "orphan_pages": report.orphan_pages,
                     "missing_concepts": report.missing_concepts,
+                    "stale_journal_pages": report.stale_journal_pages,
                 })
                 .to_string()
             }
@@ -854,6 +877,57 @@ impl WikiMcpServer {
         }
     }
 
+    /// Append a timestamped capture entry to today's journal page.
+    #[tool(
+        name = "wiki_capture",
+        description = "Append a timestamped capture entry (HH:MM prefix) to the day's journal page at wiki/_journal/YYYY-MM-DD.md. Auto-creates the page with frontmatter (title, tags: [journal], created: YYYY-MM-DD) if not yet present. Use this for low-friction quick capture; promote captures to permanent pages later via wiki_new/wiki_write."
+    )]
+    fn wiki_capture(&self, Parameters(args): Parameters<WikiCaptureArgs>) -> String {
+        let now = lw_core::journal::local_now();
+        let date = now.date();
+        let time = now.time();
+
+        let outcome = match lw_core::journal::append_capture(
+            &self.wiki_root,
+            date,
+            time,
+            &args.content,
+            &args.tags,
+            args.source.as_deref(),
+        ) {
+            Ok(o) => o,
+            Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+        };
+
+        // Hand the absolute page path to mcp_auto_commit so it can
+        // re-resolve against the actual git toplevel — wiki_root is
+        // allowed to be a subdir of a larger repo.
+        let dirty_warning = match mcp_auto_commit(
+            &self.wiki_root,
+            std::slice::from_ref(&outcome.path),
+            CommitAction::Capture,
+            &outcome.display_path,
+            McpCommitArgs {
+                commit: args.commit,
+                push: args.push,
+                author: args.author.as_deref(),
+                source: args.source.as_deref(),
+            },
+        ) {
+            McpCommitResult::Err(err) => return err,
+            McpCommitResult::Ok { dirty_warning } => dirty_warning,
+        };
+
+        let mut response = serde_json::json!({
+            "status": "ok",
+            "path": outcome.display_path,
+            "created": outcome.created,
+            "line": outcome.line,
+        });
+        attach_warnings(&mut response, dirty_warning);
+        response.to_string()
+    }
+
     /// Get wiki health statistics: page count, category breakdown, freshness distribution.
     #[tool(
         name = "wiki_stats",
@@ -906,8 +980,9 @@ impl ServerHandler for WikiMcpServer {
             .with_instructions(
                 "LLM Wiki knowledge base server. Use wiki_query to search, wiki_read to read pages, \
                  wiki_browse to list pages, wiki_tags to list tags, wiki_new to scaffold a new page, \
-                 wiki_write to create/update pages, wiki_ingest to import source material, \
-                 wiki_lint to check freshness, and wiki_stats to get wiki health statistics."
+                 wiki_write to create/update pages, wiki_capture to append a timestamped quick-capture \
+                 entry to today's journal, wiki_ingest to import source material, wiki_lint to check \
+                 freshness, and wiki_stats to get wiki health statistics."
             )
     }
 }
@@ -1533,6 +1608,116 @@ mod tests {
         assert!(
             body_str.contains("generator: lw v"),
             "commit body must contain 'generator: lw v…'; got: {body_str}"
+        );
+    }
+
+    // ── wiki_capture tests (issue #37) ───────────────────────────────────────
+
+    fn capture_args(content: &str, tags: Vec<&str>, source: Option<&str>) -> WikiCaptureArgs {
+        WikiCaptureArgs {
+            content: content.to_string(),
+            tags: tags.into_iter().map(String::from).collect(),
+            source: source.map(String::from),
+            commit: Some(false),
+            push: None,
+            author: None,
+        }
+    }
+
+    fn today_iso_string() -> String {
+        use lw_core::journal::{format_date_iso, local_now};
+        format_date_iso(local_now().date())
+    }
+
+    #[test]
+    fn wiki_capture_appends_to_today_journal_returns_path() {
+        let (tmp, server) = spawn_server();
+        let args = capture_args("MCP-pasted thought", vec![], None);
+
+        let resp = server.wiki_capture(Parameters(args));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "unexpected error: {resp}");
+
+        // Returned vault-relative path must point at today's journal page.
+        let expected = format!("wiki/_journal/{}.md", today_iso_string());
+        assert_eq!(
+            v["path"].as_str(),
+            Some(expected.as_str()),
+            "path must be vault-relative: {resp}"
+        );
+        assert!(
+            v["created"].as_bool().unwrap_or(false),
+            "first capture must report `created: true`: {resp}"
+        );
+
+        // File must exist on disk and contain the captured text.
+        let path = tmp
+            .path()
+            .join("wiki/_journal")
+            .join(format!("{}.md", today_iso_string()));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("MCP-pasted thought"));
+    }
+
+    #[test]
+    fn wiki_capture_renders_tags_and_source() {
+        let (tmp, server) = spawn_server();
+
+        let args = capture_args(
+            "with both",
+            vec!["rust", "markdown"],
+            Some("https://example.com"),
+        );
+        let resp = server.wiki_capture(Parameters(args));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "unexpected error: {resp}");
+
+        let path = tmp
+            .path()
+            .join("wiki/_journal")
+            .join(format!("{}.md", today_iso_string()));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("with both `#rust` `#markdown` ([source](https://example.com))"),
+            "MCP capture must format tags + source same as CLI; got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn wiki_capture_empty_content_returns_error() {
+        let (_tmp, server) = spawn_server();
+        let args = capture_args("   ", vec![], None);
+        let resp = server.wiki_capture(Parameters(args));
+        let v = parse(&resp);
+        assert!(v.get("error").is_some(), "expected error JSON: {resp}");
+    }
+
+    #[tokio::test]
+    async fn wiki_capture_inside_git_repo_auto_commits() {
+        let (tmp, server) = spawn_server_in_git();
+        let before = commit_count(tmp.path());
+
+        let args = WikiCaptureArgs {
+            content: "auto-committed mcp capture".to_string(),
+            tags: vec![],
+            source: None,
+            commit: None, // default → true
+            push: None,
+            author: None,
+        };
+        let resp = server.wiki_capture(Parameters(args));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "unexpected error: {resp}");
+
+        assert_eq!(
+            commit_count(tmp.path()),
+            before + 1,
+            "wiki_capture must auto-commit by default"
+        );
+        let subj = head_subject(tmp.path());
+        assert!(
+            subj.starts_with("docs(wiki): capture"),
+            "subject must be 'docs(wiki): capture <slug>'; got: {subj}"
         );
     }
 }

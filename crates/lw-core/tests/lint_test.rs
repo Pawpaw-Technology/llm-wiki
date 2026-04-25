@@ -236,3 +236,102 @@ fn lint_freshness_included() {
     let total = report.freshness.fresh + report.freshness.suspect + report.freshness.stale;
     assert!(total > 0);
 }
+
+// ── Stale journal entries (issue #37) ────────────────────────────────────────
+
+/// `lw lint` must surface a `stale_journal_pages` field listing journal pages
+/// older than the schema's `[journal] stale_after_days` threshold.
+#[test]
+fn lint_reports_stale_journal_entries_older_than_threshold() {
+    use lw_core::journal::append_capture;
+    use std::process::Command;
+    use time::macros::{date, time};
+
+    let wiki = TestWiki::new();
+    let root = wiki.root();
+
+    // Init a real git repo so age-via-git-log works.
+    Command::new("git")
+        .args(["init", "--initial-branch=main"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "T"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "t@example.com"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "seed"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+
+    // Append a capture, then commit it with a 30-day-old date.
+    append_capture(
+        root,
+        date!(2026 - 04 - 25),
+        time!(10:00),
+        "stale capture",
+        &[],
+        None,
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["add", "wiki/_journal"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    // RFC 2822 explicit form so git accepts it regardless of natural-date support.
+    let backdate = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        let unix = now.as_secs() as i64 - 30 * 86400;
+        let dt = time::OffsetDateTime::from_unix_timestamp(unix).unwrap();
+        let fmt = time::macros::format_description!(
+            "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] +0000"
+        );
+        dt.format(&fmt).unwrap()
+    };
+    let out = Command::new("git")
+        .args(["commit", "-m", "old"])
+        .env("GIT_AUTHOR_DATE", &backdate)
+        .env("GIT_COMMITTER_DATE", &backdate)
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "backdated commit failed: {out:?}");
+
+    let report = run_lint(root, None).expect("lint should succeed");
+    assert!(
+        !report.stale_journal_pages.is_empty(),
+        "lint must surface stale_journal_pages list when entries are old; report: {report:?}"
+    );
+    let finding = &report.stale_journal_pages[0];
+    assert!(
+        finding.path.contains("_journal"),
+        "stale_journal_pages.path must include `_journal`: {:?}",
+        finding.path
+    );
+    assert!(
+        finding.detail.contains("days") || finding.detail.contains("stale"),
+        "stale_journal detail should mention age/stale: {:?}",
+        finding.detail
+    );
+}

@@ -3,6 +3,7 @@ pub mod fs;
 pub mod git;
 pub mod import;
 pub mod ingest;
+pub mod journal;
 pub mod link;
 pub mod lint;
 pub mod page;

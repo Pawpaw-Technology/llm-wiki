@@ -373,8 +373,8 @@ pub fn pull_rebase(repo_root: &Path) -> Result<()> {
 // ─── High-level auto-commit policy (CLI / MCP shared) ───────────────────────
 
 /// Action recorded in the conventional-commit subject. The string forms
-/// (`"create"`, `"update"`, `"append"`, `"upsert"`, `"ingest"`) match the
-/// terms specified in issue #38.
+/// (`"create"`, `"update"`, `"append"`, `"upsert"`, `"ingest"`, `"capture"`)
+/// match the terms specified in issues #38 and #37.
 #[derive(Debug, Clone, Copy)]
 pub enum CommitAction {
     Create,
@@ -382,6 +382,8 @@ pub enum CommitAction {
     Append,
     Upsert,
     Ingest,
+    /// Quick-capture journal entry (`lw capture` / `wiki_capture`, issue #37).
+    Capture,
 }
 
 impl CommitAction {
@@ -392,6 +394,7 @@ impl CommitAction {
             CommitAction::Append => "append",
             CommitAction::Upsert => "upsert",
             CommitAction::Ingest => "ingest",
+            CommitAction::Capture => "capture",
         }
     }
 }
