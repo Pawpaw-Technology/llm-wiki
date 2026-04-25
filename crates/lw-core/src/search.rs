@@ -435,8 +435,12 @@ impl Searcher for TantivySearcher {
             }
         }
 
-        // Tag filters — each required tag must be present (AND).
-        for tag in &query.tags {
+        // Tag filters — each required tag must be present (AND). Empty
+        // strings are dropped for the same reason as the other filters: a
+        // term built from "" matches nothing, which would silently turn a
+        // single accidental empty entry in the tags vec into a global
+        // "zero results".
+        for tag in query.tags.iter().filter(|t| !t.is_empty()) {
             let term = Term::from_field_text(self.f_tags, tag);
             subqueries.push((
                 Occur::Must,
@@ -444,8 +448,14 @@ impl Searcher for TantivySearcher {
             ));
         }
 
-        // Category filter.
-        if let Some(ref cat) = query.category {
+        // Category filter. Empty-string values are treated as absent — a
+        // bare `Term::from_field_text(field, "")` yields a term that matches
+        // nothing, which silently turns `--category ""` (or `{"category": ""}`
+        // over MCP) into "zero results" instead of "no filter". Mirror the
+        // text-query branch above (`Some(text) if !text.is_empty()`).
+        if let Some(ref cat) = query.category
+            && !cat.is_empty()
+        {
             let term = Term::from_field_text(self.f_category, cat);
             subqueries.push((
                 Occur::Must,
@@ -453,8 +463,11 @@ impl Searcher for TantivySearcher {
             ));
         }
 
-        // Status filter (frontmatter `status` field).
-        if let Some(ref status) = query.status {
+        // Status filter (frontmatter `status` field). Same empty-string
+        // guard rationale as the category filter above.
+        if let Some(ref status) = query.status
+            && !status.is_empty()
+        {
             let term = Term::from_field_text(self.f_status, status);
             subqueries.push((
                 Occur::Must,
@@ -462,8 +475,11 @@ impl Searcher for TantivySearcher {
             ));
         }
 
-        // Author filter (frontmatter `author` field).
-        if let Some(ref author) = query.author {
+        // Author filter (frontmatter `author` field). Same empty-string
+        // guard rationale as the category filter above.
+        if let Some(ref author) = query.author
+            && !author.is_empty()
+        {
             let term = Term::from_field_text(self.f_author, author);
             subqueries.push((
                 Occur::Must,
