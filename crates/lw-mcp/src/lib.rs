@@ -1,6 +1,7 @@
 //! MCP server for LLM Wiki.
 //! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint, wiki_stats tools.
 
+use lw_core::backlinks;
 use lw_core::fs::{
     NewPageRequest, atomic_write, category_from_path, list_pages, new_page, read_page,
     validate_wiki_path, write_page,
@@ -298,6 +299,14 @@ pub struct WikiNewArgs {
     pub source: Option<String>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WikiBacklinksArgs {
+    /// Target page to look up inbound links for. Accepts a bare slug (e.g.
+    /// `"bar"`), a category-relative path (`"tools/bar.md"`), or a
+    /// vault-relative path with wiki/ prefix (`"wiki/tools/bar.md"`).
+    pub path: String,
+}
+
 // === Server ===
 
 #[derive(Clone)]
@@ -530,6 +539,13 @@ impl WikiMcpServer {
                         .to_string();
                 }
 
+                // Incrementally update the backlink index for this source page.
+                if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki"))
+                    && let Err(e) = backlinks::update_for_page(&self.wiki_root, rel)
+                {
+                    tracing::warn!("backlink update failed for {}: {e}", args.path);
+                }
+
                 if let Err(e) = self.searcher.index_page(&args.path, &page) {
                     tracing::warn!("Failed to index page {}: {}", args.path, e);
                 }
@@ -611,6 +627,16 @@ impl WikiMcpServer {
                         "error": format!("Failed to write page: {e}")
                     })
                     .to_string();
+                }
+
+                // Incrementally update the backlink index — section-write
+                // paths can introduce or drop `[[wikilinks]]` just like
+                // overwrite. Without this call, append_section /
+                // upsert_section silently leave the index stale.
+                if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki"))
+                    && let Err(e) = backlinks::update_for_page(&self.wiki_root, rel)
+                {
+                    tracing::warn!("backlink update failed for {}: {e}", args.path);
                 }
 
                 let action = if args.mode == "append_section" {
@@ -837,6 +863,13 @@ impl WikiMcpServer {
                     .to_string_lossy()
                     .to_string();
 
+                // Incrementally update the backlink index for this new source page.
+                if let Ok(rel) = abs_path.strip_prefix(self.wiki_root.join("wiki"))
+                    && let Err(e) = backlinks::update_for_page(&self.wiki_root, rel)
+                {
+                    tracing::warn!("backlink update failed for new page {}: {e}", index_path);
+                }
+
                 if let Err(e) = self.searcher.index_page(&index_path, &page) {
                     tracing::warn!("Failed to index new page {}: {}", index_path, e);
                 }
@@ -926,6 +959,81 @@ impl WikiMcpServer {
         });
         attach_warnings(&mut response, dirty_warning);
         response.to_string()
+    }
+
+    /// Find all pages that link to a given page (backlinks / inbound links).
+    #[tool(
+        name = "wiki_backlinks",
+        description = "Return all pages that link to a given page via [[wikilinks]] or frontmatter related: entries. \
+                       Accepts a bare slug, category-relative path, or wiki/-prefixed vault path. \
+                       Returns a JSON object with a `backlinks` array. \
+                       Each entry has `source` (vault-relative path), `kind` (wikilink|related), and `context` (snippet)."
+    )]
+    fn wiki_backlinks(&self, Parameters(args): Parameters<WikiBacklinksArgs>) -> String {
+        // Normalise input to a slug: strip "wiki/" prefix, strip leading
+        // category/, strip ".md" extension.
+        let raw = args.path.trim_start_matches("wiki/");
+        let slug = std::path::Path::new(raw)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(raw)
+            .to_string();
+
+        // Ensure the index exists (lazy build on first call).
+        if let Err(e) = backlinks::ensure_index(&self.wiki_root) {
+            tracing::warn!("backlink index build failed: {e}");
+        }
+
+        // Verify the target page actually exists in the wiki.
+        let wiki_dir = self.wiki_root.join("wiki");
+        let target_exists = if wiki_dir.exists() {
+            // Walk categories to find <slug>.md
+            std::fs::read_dir(&wiki_dir)
+                .ok()
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                        .any(|cat| cat.path().join(format!("{slug}.md")).exists())
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        if !target_exists {
+            return serde_json::json!({
+                "error": format!("page not found: {slug}")
+            })
+            .to_string();
+        }
+
+        match backlinks::query(&self.wiki_root, &slug) {
+            Ok(Some(record)) => {
+                let entries: Vec<serde_json::Value> = record
+                    .sources
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "source": s.path,
+                            "kind": serde_json::to_value(&s.kind).unwrap_or_default(),
+                            "context": s.context,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "target": slug,
+                    "backlinks": entries,
+                })
+                .to_string()
+            }
+            Ok(None) => serde_json::json!({
+                "target": slug,
+                "backlinks": [],
+            })
+            .to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
     }
 
     /// Get wiki health statistics: page count, category breakdown, freshness distribution.
@@ -1718,6 +1826,239 @@ mod tests {
         assert!(
             subj.starts_with("docs(wiki): capture"),
             "subject must be 'docs(wiki): capture <slug>'; got: {subj}"
+        );
+    }
+
+    // ─── wiki_backlinks tests (issue #39) ────────────────────────────────────
+
+    /// Stage two pages — `tools/bar.md` (target) and `tools/foo.md`
+    /// (source linking to bar) — using the MCP wiki_write tool so the
+    /// backlink index update path is exercised end-to-end.
+    fn seed_wiki_with_link(server: &WikiMcpServer) {
+        let target = WikiWriteArgs {
+            path: "tools/bar.md".to_string(),
+            content: "---\ntitle: Bar\ntags: [t]\n---\n\nbar body\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(target));
+
+        let source = WikiWriteArgs {
+            path: "tools/foo.md".to_string(),
+            content: "---\ntitle: Foo\ntags: [t]\n---\n\nUse [[bar]] for parsing.\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(source));
+    }
+
+    #[tokio::test]
+    async fn wiki_backlinks_returns_inbound_pages() {
+        let (_tmp, server) = spawn_server();
+        seed_wiki_with_link(&server);
+
+        let args = WikiBacklinksArgs {
+            path: "wiki/tools/bar.md".to_string(),
+        };
+        let resp = server.wiki_backlinks(Parameters(args));
+        let v = parse(&resp);
+
+        let backlinks = v["backlinks"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected backlinks array, got: {resp}"));
+        assert_eq!(backlinks.len(), 1, "one inbound link: {resp}");
+        assert_eq!(
+            backlinks[0]["source"].as_str(),
+            Some("wiki/tools/foo.md"),
+            "source path must be vault-relative with wiki/ prefix: {resp}"
+        );
+        let context = backlinks[0]["context"]
+            .as_str()
+            .expect("wikilink source carries context");
+        assert!(
+            context.contains("[[bar]]"),
+            "context should center on the wikilink: {context}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wiki_backlinks_accepts_slug_input() {
+        let (_tmp, server) = spawn_server();
+        seed_wiki_with_link(&server);
+
+        // Bare slug instead of full wiki/... path.
+        let args = WikiBacklinksArgs {
+            path: "bar".to_string(),
+        };
+        let resp = server.wiki_backlinks(Parameters(args));
+        let v = parse(&resp);
+        assert!(v["backlinks"].is_array(), "got: {resp}");
+        assert_eq!(v["backlinks"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn wiki_backlinks_unknown_page_returns_empty_list() {
+        let (_tmp, server) = spawn_server();
+        seed_wiki_with_link(&server);
+
+        let args = WikiBacklinksArgs {
+            path: "not-a-real-page".to_string(),
+        };
+        let resp = server.wiki_backlinks(Parameters(args));
+        let v = parse(&resp);
+        // Per spec: missing-page returns an `error` field so the agent can react.
+        assert!(
+            v.get("error").is_some(),
+            "unknown target should error: {resp}"
+        );
+    }
+
+    /// Regression: review feedback on PR #94. The `append_section` /
+    /// `upsert_section` paths in `wiki_write` previously skipped
+    /// `backlinks::update_for_page`, so adding a `[[wikilink]]` via a
+    /// section write left the backlink index stale. We call
+    /// `rebuild_index` after the initial overwrite seed so the `.built`
+    /// sentinel exists and the subsequent `wiki_backlinks` call
+    /// short-circuits — otherwise a full rebuild on the query side
+    /// would re-discover the new wikilink and mask the bug.
+    #[tokio::test]
+    async fn wiki_write_append_section_updates_backlinks() {
+        let (tmp, server) = spawn_server();
+
+        // Two pages: target (has no inbound links yet) and source (will
+        // gain a [[target]] link via append_section).
+        let target = WikiWriteArgs {
+            path: "tools/append-target.md".to_string(),
+            content: "---\ntitle: Append Target\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(target));
+
+        let source = WikiWriteArgs {
+            path: "tools/append-source.md".to_string(),
+            content: "---\ntitle: Append Source\ntags: [t]\n---\n\nIntro paragraph.\n\n## Notes\n\nSome notes.\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(source));
+
+        // Mark the index as built so wiki_backlinks short-circuits
+        // ensure_index. Without this, ensure_index would walk the wiki
+        // and discover the new wikilink, masking the bug.
+        lw_core::backlinks::rebuild_index(tmp.path()).expect("rebuild ok");
+
+        // Now append a [[append-target]] reference via append_section.
+        let append = WikiWriteArgs {
+            path: "tools/append-source.md".to_string(),
+            content: "Cross-reference [[append-target]] for context.".to_string(),
+            mode: "append_section".to_string(),
+            section: Some("Notes".to_string()),
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(append));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "append failed: {resp}");
+
+        // Query the backlinks for the target — it should now include the source.
+        let q = WikiBacklinksArgs {
+            path: "append-target".to_string(),
+        };
+        let resp = server.wiki_backlinks(Parameters(q));
+        let v = parse(&resp);
+        let backlinks = v["backlinks"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected backlinks array, got: {resp}"));
+        assert_eq!(
+            backlinks.len(),
+            1,
+            "append_section must update backlinks index; got: {resp}"
+        );
+        assert_eq!(
+            backlinks[0]["source"].as_str(),
+            Some("wiki/tools/append-source.md"),
+            "wrong source path: {resp}"
+        );
+    }
+
+    /// Regression: same review feedback as above, but for `upsert_section`.
+    #[tokio::test]
+    async fn wiki_write_upsert_section_updates_backlinks() {
+        let (tmp, server) = spawn_server();
+
+        let target = WikiWriteArgs {
+            path: "tools/upsert-target.md".to_string(),
+            content: "---\ntitle: Upsert Target\ntags: [t]\n---\n\nbody\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(target));
+
+        let source = WikiWriteArgs {
+            path: "tools/upsert-source.md".to_string(),
+            content: "---\ntitle: Upsert Source\ntags: [t]\n---\n\nIntro.\n".to_string(),
+            mode: "overwrite".to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let _ = server.wiki_write(Parameters(source));
+
+        // Same masking-prevention as the append test.
+        lw_core::backlinks::rebuild_index(tmp.path()).expect("rebuild ok");
+
+        // upsert a Related section that adds a [[upsert-target]] link.
+        let upsert = WikiWriteArgs {
+            path: "tools/upsert-source.md".to_string(),
+            content: "See [[upsert-target]] for details.".to_string(),
+            mode: "upsert_section".to_string(),
+            section: Some("Related".to_string()),
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(upsert));
+        let v = parse(&resp);
+        assert!(v.get("error").is_none(), "upsert failed: {resp}");
+
+        let q = WikiBacklinksArgs {
+            path: "upsert-target".to_string(),
+        };
+        let resp = server.wiki_backlinks(Parameters(q));
+        let v = parse(&resp);
+        let backlinks = v["backlinks"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected backlinks array, got: {resp}"));
+        assert_eq!(
+            backlinks.len(),
+            1,
+            "upsert_section must update backlinks index; got: {resp}"
         );
     }
 }

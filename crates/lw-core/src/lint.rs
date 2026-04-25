@@ -80,9 +80,11 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
 
         let rel_str = rel_path.to_string_lossy().to_string();
 
-        // Skip special wiki files from orphan detection
+        // Skip special wiki files and _journal/* pages from orphan detection.
+        // Journal pages are intentionally capture-not-linked (issue #39).
         let is_special = matches!(rel_str.as_str(), "index.md" | "log.md");
-        if !is_special {
+        let is_journal = rel_str.starts_with("_journal/") || rel_str.starts_with("_journal\\");
+        if !is_special && !is_journal {
             orphan_candidates.insert(rel_str.clone());
         }
 
