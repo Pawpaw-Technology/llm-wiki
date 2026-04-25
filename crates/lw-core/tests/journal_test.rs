@@ -8,13 +8,13 @@
 //!   4. `--tag <tag>` (repeatable) and `--source <url>` flags render correctly.
 //!   7. `find_stale_captures` reports journal pages older than the threshold.
 
+use lw_core::WikiError;
 use lw_core::fs::init_wiki;
 use lw_core::journal::{
-    append_capture, find_stale_captures, format_capture_line, format_date_iso, format_time_hm,
-    journal_path_for_date, DEFAULT_STALE_AFTER_DAYS, JOURNAL_DIR,
+    DEFAULT_STALE_AFTER_DAYS, JOURNAL_DIR, append_capture, find_stale_captures,
+    format_capture_line, format_date_iso, format_time_hm, journal_path_for_date,
 };
 use lw_core::schema::WikiSchema;
-use lw_core::WikiError;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -26,6 +26,22 @@ fn fresh_wiki() -> TempDir {
     let tmp = TempDir::new().expect("tempdir");
     init_wiki(tmp.path(), &WikiSchema::default()).expect("init_wiki");
     tmp
+}
+
+/// Build an RFC 2822 timestamp 30 days in the past. Git accepts this form
+/// regardless of locale or natural-date support.
+fn thirty_days_ago_rfc2822() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time before epoch?");
+    let unix = now.as_secs() as i64 - 30 * 86400;
+    // Hand off to git itself: `git -C <dir> rev-parse` doesn't help here,
+    // but we can use the `time` crate (already a dev-dep) to format.
+    let dt = time::OffsetDateTime::from_unix_timestamp(unix).expect("valid timestamp");
+    let fmt = time::macros::format_description!(
+        "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] +0000"
+    );
+    dt.format(&fmt).expect("format ok")
 }
 
 /// Initialise a git repo at `path` with sane identity config.
@@ -392,12 +408,14 @@ fn find_stale_captures_flags_old_journal_pages_via_git_age() {
         .current_dir(tmp.path())
         .output()
         .unwrap();
-    // Commit with date 30 days in the past.
-    let backdate = "30 days ago";
+    // Commit with a wall-clock date 30 days in the past. Using an explicit
+    // RFC 2822 date avoids "fatal: invalid date format" on git versions
+    // that don't accept the natural-language `"30 days ago"` form.
+    let backdate = thirty_days_ago_rfc2822();
     let out = Command::new("git")
         .args(["commit", "-m", "backdate"])
-        .env("GIT_AUTHOR_DATE", backdate)
-        .env("GIT_COMMITTER_DATE", backdate)
+        .env("GIT_AUTHOR_DATE", &backdate)
+        .env("GIT_COMMITTER_DATE", &backdate)
         .current_dir(tmp.path())
         .output()
         .unwrap();

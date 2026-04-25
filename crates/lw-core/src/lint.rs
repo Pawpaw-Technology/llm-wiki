@@ -166,6 +166,33 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
         })
         .collect();
 
+    // Journal triage check (issue #37): journal pages whose last git
+    // commit is older than `[journal] stale_after_days` are flagged as
+    // unprocessed captures awaiting promotion to permanent pages.
+    let stale_threshold = schema.journal_stale_after_days();
+    let stale_journal_pages: Vec<LintFinding> =
+        crate::journal::find_stale_captures(root, stale_threshold)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|finding| {
+                // Honor the `--category` filter the same way other checks do.
+                // The stale-finder returns wiki-relative paths starting with
+                // `_journal/`; if the user filtered to a different category,
+                // suppress these findings.
+                match category {
+                    Some(filter) => finding.path.starts_with(&format!("{filter}/")),
+                    None => true,
+                }
+            })
+            .map(|finding| LintFinding {
+                path: finding.path,
+                detail: format!(
+                    "stale capture (age={}d, threshold={}d) — promote or archive",
+                    finding.age_days, stale_threshold
+                ),
+            })
+            .collect();
+
     Ok(LintReport {
         todo_pages,
         broken_related,
@@ -177,6 +204,6 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
             stale: freshness_stale,
             stale_pages,
         },
-        stale_journal_pages: Vec::new(),
+        stale_journal_pages,
     })
 }

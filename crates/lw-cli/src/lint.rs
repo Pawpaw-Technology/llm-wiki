@@ -21,6 +21,7 @@ fn print_human_report(report: &LintReport) {
         + report.broken_related.len()
         + report.orphan_pages.len()
         + report.missing_concepts.len()
+        + report.stale_journal_pages.len()
         + report.freshness.stale;
 
     println!("Wiki Lint Report");
@@ -54,6 +55,17 @@ fn print_human_report(report: &LintReport) {
     if !report.missing_concepts.is_empty() {
         println!("Missing Concepts ({}):", report.missing_concepts.len());
         for f in &report.missing_concepts {
+            println!("  - {}: {}", f.path, f.detail);
+        }
+        println!();
+    }
+
+    if !report.stale_journal_pages.is_empty() {
+        println!(
+            "Unprocessed Journal Captures ({}):",
+            report.stale_journal_pages.len()
+        );
+        for f in &report.stale_journal_pages {
             println!("  - {}: {}", f.path, f.detail);
         }
         println!();

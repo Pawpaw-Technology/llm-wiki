@@ -786,12 +786,14 @@ impl WikiMcpServer {
                         "broken_related_count": report.broken_related.len(),
                         "orphan_count": report.orphan_pages.len(),
                         "missing_concept_count": report.missing_concepts.len(),
+                        "stale_journal_count": report.stale_journal_pages.len(),
                     },
                     "stale_pages": report.freshness.stale_pages,
                     "todo_pages": report.todo_pages,
                     "broken_related": report.broken_related,
                     "orphan_pages": report.orphan_pages,
                     "missing_concepts": report.missing_concepts,
+                    "stale_journal_pages": report.stale_journal_pages,
                 })
                 .to_string()
             }
@@ -880,8 +882,50 @@ impl WikiMcpServer {
         name = "wiki_capture",
         description = "Append a timestamped capture entry (HH:MM prefix) to the day's journal page at wiki/_journal/YYYY-MM-DD.md. Auto-creates the page with frontmatter (title, tags: [journal], created: YYYY-MM-DD) if not yet present. Use this for low-friction quick capture; promote captures to permanent pages later via wiki_new/wiki_write."
     )]
-    fn wiki_capture(&self, Parameters(_args): Parameters<WikiCaptureArgs>) -> String {
-        unimplemented!("wiki_capture not yet implemented (#37)")
+    fn wiki_capture(&self, Parameters(args): Parameters<WikiCaptureArgs>) -> String {
+        let now = lw_core::journal::local_now();
+        let date = now.date();
+        let time = now.time();
+
+        let outcome = match lw_core::journal::append_capture(
+            &self.wiki_root,
+            date,
+            time,
+            &args.content,
+            &args.tags,
+            args.source.as_deref(),
+        ) {
+            Ok(o) => o,
+            Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+        };
+
+        // Hand the absolute page path to mcp_auto_commit so it can
+        // re-resolve against the actual git toplevel — wiki_root is
+        // allowed to be a subdir of a larger repo.
+        let dirty_warning = match mcp_auto_commit(
+            &self.wiki_root,
+            std::slice::from_ref(&outcome.path),
+            CommitAction::Capture,
+            &outcome.display_path,
+            McpCommitArgs {
+                commit: args.commit,
+                push: args.push,
+                author: args.author.as_deref(),
+                source: args.source.as_deref(),
+            },
+        ) {
+            McpCommitResult::Err(err) => return err,
+            McpCommitResult::Ok { dirty_warning } => dirty_warning,
+        };
+
+        let mut response = serde_json::json!({
+            "status": "ok",
+            "path": outcome.display_path,
+            "created": outcome.created,
+            "line": outcome.line,
+        });
+        attach_warnings(&mut response, dirty_warning);
+        response.to_string()
     }
 
     /// Get wiki health statistics: page count, category breakdown, freshness distribution.
@@ -936,8 +980,9 @@ impl ServerHandler for WikiMcpServer {
             .with_instructions(
                 "LLM Wiki knowledge base server. Use wiki_query to search, wiki_read to read pages, \
                  wiki_browse to list pages, wiki_tags to list tags, wiki_new to scaffold a new page, \
-                 wiki_write to create/update pages, wiki_ingest to import source material, \
-                 wiki_lint to check freshness, and wiki_stats to get wiki health statistics."
+                 wiki_write to create/update pages, wiki_capture to append a timestamped quick-capture \
+                 entry to today's journal, wiki_ingest to import source material, wiki_lint to check \
+                 freshness, and wiki_stats to get wiki health statistics."
             )
     }
 }

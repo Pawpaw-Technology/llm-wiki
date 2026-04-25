@@ -1,6 +1,6 @@
 mod common;
 
-use common::{make_page, TestWiki};
+use common::{TestWiki, make_page};
 use lw_core::lint::run_lint;
 
 #[test]
@@ -297,10 +297,22 @@ fn lint_reports_stale_journal_entries_older_than_threshold() {
         .current_dir(root)
         .output()
         .unwrap();
+    // RFC 2822 explicit form so git accepts it regardless of natural-date support.
+    let backdate = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        let unix = now.as_secs() as i64 - 30 * 86400;
+        let dt = time::OffsetDateTime::from_unix_timestamp(unix).unwrap();
+        let fmt = time::macros::format_description!(
+            "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] +0000"
+        );
+        dt.format(&fmt).unwrap()
+    };
     let out = Command::new("git")
         .args(["commit", "-m", "old"])
-        .env("GIT_AUTHOR_DATE", "30 days ago")
-        .env("GIT_COMMITTER_DATE", "30 days ago")
+        .env("GIT_AUTHOR_DATE", &backdate)
+        .env("GIT_COMMITTER_DATE", &backdate)
         .current_dir(root)
         .output()
         .unwrap();

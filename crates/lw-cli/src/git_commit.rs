@@ -57,5 +57,6 @@ fn action_str(a: CommitAction) -> &'static str {
         CommitAction::Append => "append",
         CommitAction::Upsert => "upsert",
         CommitAction::Ingest => "ingest",
+        CommitAction::Capture => "capture",
     }
 }
