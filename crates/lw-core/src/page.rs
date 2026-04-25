@@ -17,6 +17,10 @@ pub struct Frontmatter {
     pub generator: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related: Option<Vec<String>>,
+    /// Page lifecycle status — free-form. Common values: `draft`, `published`,
+    /// `archived`. Stored verbatim and indexed for `lw query --status` filtering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +32,9 @@ pub struct Page {
     pub author: Option<String>,
     pub generator: Option<String>,
     pub related: Option<Vec<String>>,
+    /// Optional lifecycle status (`draft`/`published`/`archived`/etc.). See
+    /// [`Frontmatter::status`].
+    pub status: Option<String>,
     pub body: String,
 }
 
@@ -41,6 +48,7 @@ impl Page {
             author: None,
             generator: None,
             related: None,
+            status: None,
             body: body.to_string(),
         }
     }
@@ -71,6 +79,7 @@ impl Page {
             author: fm.author,
             generator: fm.generator,
             related: fm.related,
+            status: fm.status,
             body: parsed.content,
         })
     }
@@ -84,6 +93,7 @@ impl Page {
             author: self.author.clone(),
             generator: self.generator.clone(),
             related: self.related.clone(),
+            status: self.status.clone(),
         }
     }
 

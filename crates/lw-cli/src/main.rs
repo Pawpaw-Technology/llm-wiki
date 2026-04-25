@@ -53,17 +53,26 @@ enum Commands {
 
     /// Search wiki pages
     #[command(
-        after_help = "Examples:\n  lw query \"attention mechanism\"\n  lw query \"transformer\" --tag architecture --format json\n  lw query \"gpu\" --stale --format brief\n  lw query \"\" --tag training"
+        after_help = "Examples:\n  lw query \"attention mechanism\"\n  lw query \"transformer\" --tag architecture --format json\n  lw query \"\" --tag rust --tag markdown        # both tags required (AND)\n  lw query \"\" --status draft\n  lw query \"\" --author alice --category tools\n  lw query \"\" --tag rust --sort title\n  lw query \"gpu\" --stale --format brief"
     )]
     Query {
         /// Search text (use "" for tag/category-only queries)
         text: String,
-        /// Filter by tag (repeatable)
+        /// Filter by tag (repeatable; multiple --tag flags AND together)
         #[arg(long)]
         tag: Vec<String>,
         /// Filter by category
         #[arg(long)]
         category: Option<String>,
+        /// Filter by frontmatter status field (e.g. draft, published)
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by frontmatter author field
+        #[arg(long)]
+        author: Option<String>,
+        /// Sort order: relevance | created_desc | created_asc | title
+        #[arg(long, default_value = "relevance")]
+        sort: String,
         /// Max results
         #[arg(short, long, default_value = "20")]
         limit: usize,
@@ -446,11 +455,25 @@ fn main() {
             text,
             tag,
             category,
+            status,
+            author,
+            sort,
             limit,
             format,
             stale,
         } => match resolve_root(cli.root) {
-            Ok(root) => query::run(&root, &text, &tag, &category, limit, &format, stale),
+            Ok(root) => query::run(query::RunArgs {
+                root: &root,
+                text: &text,
+                tags: &tag,
+                category: &category,
+                status: &status,
+                author: &author,
+                sort: &sort,
+                limit,
+                format: &format,
+                stale,
+            }),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);

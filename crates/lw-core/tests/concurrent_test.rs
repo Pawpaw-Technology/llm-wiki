@@ -84,6 +84,9 @@ fn parallel_search_indexes() {
                         text: Some("attention".into()),
                         tags: vec![],
                         category: None,
+                        status: None,
+                        author: None,
+                        sort: lw_core::search::SearchSort::Relevance,
                         limit: 10,
                     })
                     .unwrap();
@@ -99,6 +102,9 @@ fn parallel_search_indexes() {
                         text: Some("training".into()),
                         tags: vec!["training".into()],
                         category: None,
+                        status: None,
+                        author: None,
+                        sort: lw_core::search::SearchSort::Relevance,
                         limit: 10,
                     })
                     .unwrap();
@@ -273,6 +279,9 @@ fn shared_searcher_across_threads() {
                         text: Some("attention".into()),
                         tags: vec![],
                         category: None,
+                        status: None,
+                        author: None,
+                        sort: lw_core::search::SearchSort::Relevance,
                         limit: 10,
                     })
                     .unwrap();

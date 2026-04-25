@@ -302,6 +302,7 @@ pub fn new_page(
         author: req.author,
         generator: None,
         related: None,
+        status: None,
         body: template,
     };
 

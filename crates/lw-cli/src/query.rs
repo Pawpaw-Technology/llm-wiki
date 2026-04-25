@@ -2,8 +2,23 @@ use crate::output::{self, Format};
 use lw_core::WikiError;
 use lw_core::fs::load_schema;
 use lw_core::git::{FreshnessLevel, page_freshness};
-use lw_core::search::{SearchHit, SearchQuery, Searcher, TantivySearcher};
+use lw_core::search::{SearchHit, SearchQuery, SearchSort, Searcher, TantivySearcher};
 use std::path::Path;
+
+/// Argument bundle for [`run`] — keeps the call-site sane as we add filters
+/// (status, author) and sort modes for issue #41.
+pub struct RunArgs<'a> {
+    pub root: &'a Path,
+    pub text: &'a str,
+    pub tags: &'a [String],
+    pub category: &'a Option<String>,
+    pub status: &'a Option<String>,
+    pub author: &'a Option<String>,
+    pub sort: &'a str,
+    pub limit: usize,
+    pub format: &'a Format,
+    pub stale: bool,
+}
 
 /// A search hit enriched with freshness information.
 #[derive(Debug, Clone)]
@@ -37,18 +52,10 @@ pub fn filter_stale(hits: Vec<HitWithFreshness>) -> Vec<HitWithFreshness> {
         .collect()
 }
 
-pub fn run(
-    root: &Path,
-    text: &str,
-    tags: &[String],
-    category: &Option<String>,
-    limit: usize,
-    format: &Format,
-    stale: bool,
-) -> anyhow::Result<()> {
+pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     // Validate wiki exists (produces actionable error message)
-    let schema = load_schema(root)?;
-    let index_dir = root.join(lw_core::INDEX_DIR);
+    let schema = load_schema(args.root)?;
+    let index_dir = args.root.join(lw_core::INDEX_DIR);
     std::fs::create_dir_all(&index_dir)?;
     let searcher = TantivySearcher::new(&index_dir)?;
 
@@ -56,7 +63,7 @@ pub fn run(
     // If an MCP server (`lw serve`) is already holding the writer lock for
     // incremental updates, we can't rebuild in parallel — fall back to the
     // existing on-disk index instead of failing the whole command.
-    let wiki_dir = root.join("wiki");
+    let wiki_dir = args.root.join("wiki");
     match searcher.rebuild(&wiki_dir) {
         Ok(()) => {}
         Err(WikiError::IndexLocked { .. }) => {
@@ -67,31 +74,94 @@ pub fn run(
         Err(e) => return Err(e.into()),
     }
 
+    // Parse the sort string up front so we surface a clean error rather than
+    // leaking a `WikiError::Internal` from inside SearchQuery construction.
+    let sort =
+        SearchSort::parse(args.sort).map_err(|e| anyhow::anyhow!("invalid --sort value: {e}"))?;
+
     let query = SearchQuery {
-        text: if text.is_empty() {
+        text: if args.text.is_empty() {
             None
         } else {
-            Some(text.to_string())
+            Some(args.text.to_string())
         },
-        tags: tags.to_vec(),
-        category: category.clone(),
-        limit,
+        tags: args.tags.to_vec(),
+        category: args.category.clone(),
+        status: args.status.clone(),
+        author: args.author.clone(),
+        sort,
+        limit: args.limit,
     };
     let results = searcher.search(&query)?;
 
-    // Enrich hits with freshness from git
+    // Enrich hits with freshness from git.
     let enriched = enrich_with_freshness(&wiki_dir, &results.hits, schema.wiki.default_review_days);
 
     // Apply stale filter if requested
-    let enriched = if stale {
+    let enriched = if args.stale {
         filter_stale(enriched)
     } else {
         enriched
     };
 
-    let total = if stale { enriched.len() } else { results.total };
-    output::print_query_results_with_freshness(text, &enriched, total, format);
+    // Date-based sort modes need git-history info, which the search layer
+    // doesn't have. Apply them here, after freshness enrichment, by reading
+    // each hit's first-commit timestamp via `lw_core::git`. Title/Relevance
+    // sort already happened inside the searcher.
+    let enriched = match sort {
+        SearchSort::CreatedDesc | SearchSort::CreatedAsc => {
+            sort_by_created(enriched, &wiki_dir, sort)
+        }
+        SearchSort::Title | SearchSort::Relevance => enriched,
+    };
+
+    let total = if args.stale {
+        enriched.len()
+    } else {
+        results.total
+    };
+    output::print_query_results_with_freshness(args.text, &enriched, total, args.format);
     Ok(())
+}
+
+/// Sort enriched hits by their first git-commit timestamp. Pages with no
+/// git history (uncommitted) are placed last, oldest-first, so they're easy
+/// to spot.
+fn sort_by_created(
+    mut hits: Vec<HitWithFreshness>,
+    wiki_dir: &Path,
+    sort: SearchSort,
+) -> Vec<HitWithFreshness> {
+    use lw_core::git::page_first_commit_time;
+
+    // Cache per-path lookups in case the same path slipped in twice (it
+    // shouldn't, but git invocations are slow enough to warrant it).
+    let mut times: std::collections::HashMap<String, Option<i64>> =
+        std::collections::HashMap::new();
+    for h in &hits {
+        times.entry(h.hit.path.clone()).or_insert_with(|| {
+            page_first_commit_time(&wiki_dir.join(&h.hit.path))
+                .ok()
+                .flatten()
+        });
+    }
+
+    hits.sort_by(|a, b| {
+        let ta = times.get(&a.hit.path).copied().flatten();
+        let tb = times.get(&b.hit.path).copied().flatten();
+        match (ta, tb) {
+            (Some(x), Some(y)) => match sort {
+                SearchSort::CreatedDesc => y.cmp(&x),
+                SearchSort::CreatedAsc => x.cmp(&y),
+                _ => std::cmp::Ordering::Equal,
+            },
+            // Pages without git history sort to the end regardless of order.
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+    hits
 }
 
 #[cfg(test)]

@@ -35,6 +35,7 @@ fn write_and_read_page() {
         author: Some("alice".to_string()),
         generator: None,
         related: None,
+        status: None,
         body: "Hello world.\n".to_string(),
     };
     let path = root.join("wiki/architecture/test-page.md");
@@ -58,6 +59,7 @@ fn list_pages_finds_markdown() {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: "A.\n".into(),
     };
     let p2 = Page {
@@ -68,6 +70,7 @@ fn list_pages_finds_markdown() {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: "B.\n".into(),
     };
     write_page(&root.join("wiki/architecture/a.md"), &p1).unwrap();
@@ -170,6 +173,7 @@ fn write_page_leaves_no_tmp_file() {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: "content\n".to_string(),
     };
     let path = root.join("wiki/architecture/atomic-test.md");
@@ -231,6 +235,7 @@ fn write_page_does_not_follow_victim_symlink() {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: "safe\n".to_string(),
     };
     write_page(&page_path, &page).unwrap();

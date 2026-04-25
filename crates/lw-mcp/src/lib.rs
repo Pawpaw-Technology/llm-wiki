@@ -95,12 +95,21 @@ fn mcp_auto_commit(
 pub struct WikiQueryArgs {
     /// Full-text search query
     pub query: String,
-    /// Filter by tags (comma-separated)
+    /// Filter by tags (comma-separated; multiple tags require all to match)
     #[serde(default)]
     pub tags: Option<String>,
     /// Filter by category
     #[serde(default)]
     pub category: Option<String>,
+    /// Filter by frontmatter `status` field (e.g. `draft`, `published`)
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Filter by frontmatter `author` field
+    #[serde(default)]
+    pub author: Option<String>,
+    /// Result ordering: `relevance` (default) | `created_desc` | `created_asc` | `title`
+    #[serde(default)]
+    pub sort: Option<String>,
     /// Max results (default: 20)
     #[serde(default)]
     pub limit: Option<usize>,
@@ -320,16 +329,33 @@ pub struct WikiMcpServer {
 
 #[tool_router]
 impl WikiMcpServer {
-    /// Full-text search across wiki pages with optional tag/category filters.
+    /// Full-text search across wiki pages with optional frontmatter filters.
     #[tool(
         name = "wiki_query",
-        description = "Full-text search across wiki pages with optional tag/category filters. Returns matching pages with titles, paths, scores, and text snippets."
+        description = "Full-text search across wiki pages with optional tag, category, status, and author filters. Multiple filters AND together. Returns matching pages with titles, paths, scores, and text snippets."
     )]
     fn wiki_query(&self, Parameters(args): Parameters<WikiQueryArgs>) -> String {
+        // Backwards-compat note (#41):
+        // `tags` stays a CSV string. Existing callers (claude-code, kimi)
+        // pass `"rust,markdown"` and expect AND semantics. We split on `,`
+        // and trim, dropping empty fragments. Empty whole-string → no tags.
         let tags: Vec<String> = args
             .tags
-            .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
+            .map(|t| {
+                t.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
+
+        let sort = match args.sort.as_deref() {
+            None | Some("") => lw_core::search::SearchSort::Relevance,
+            Some(s) => match lw_core::search::SearchSort::parse(s) {
+                Ok(v) => v,
+                Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+            },
+        };
 
         let sq = SearchQuery {
             text: if args.query.is_empty() {
@@ -339,6 +365,9 @@ impl WikiMcpServer {
             },
             tags,
             category: args.category,
+            status: args.status,
+            author: args.author,
+            sort,
             limit: args.limit.unwrap_or(20),
         };
 
@@ -1418,6 +1447,9 @@ mod tests {
             query: "Unique Foo".to_string(),
             tags: None,
             category: None,
+            status: None,
+            author: None,
+            sort: None,
             limit: Some(10),
         };
         let qresp = server.wiki_query(Parameters(query_args));
@@ -2060,5 +2092,206 @@ mod tests {
             1,
             "upsert_section must update backlinks index; got: {resp}"
         );
+    }
+
+    // ─── Frontmatter field queries (#41) ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn wiki_query_filter_by_status() {
+        let (tmp, server) = spawn_server();
+
+        // Write two pages with different status values
+        std::fs::write(
+            tmp.path().join("wiki/tools/draft.md"),
+            "---\ntitle: Draft Page\ntags: [rust]\nstatus: draft\n---\n\nDraft body for testing.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("wiki/tools/published.md"),
+            "---\ntitle: Published Page\ntags: [rust]\nstatus: published\n---\n\nPublished body.\n",
+        )
+        .unwrap();
+
+        // Force a rebuild so the index sees the on-disk files
+        let wiki_dir = tmp.path().join("wiki");
+        server.searcher.rebuild(&wiki_dir).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: None,
+            category: None,
+            status: Some("draft".to_string()),
+            author: None,
+            sort: None,
+            limit: Some(10),
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        let total = v["total"].as_u64().unwrap();
+        assert_eq!(total, 1, "expected exactly 1 draft page; got: {resp}");
+        let hits = v["hits"].as_array().unwrap();
+        assert_eq!(hits[0]["title"], "Draft Page");
+    }
+
+    #[tokio::test]
+    async fn wiki_query_filter_by_author() {
+        let (tmp, server) = spawn_server();
+        std::fs::write(
+            tmp.path().join("wiki/tools/alice.md"),
+            "---\ntitle: ByAlice\ntags: [t]\nauthor: alice\n---\n\nAlice body.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("wiki/tools/bob.md"),
+            "---\ntitle: ByBob\ntags: [t]\nauthor: bob\n---\n\nBob body.\n",
+        )
+        .unwrap();
+        server.searcher.rebuild(&tmp.path().join("wiki")).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: None,
+            category: None,
+            status: None,
+            author: Some("alice".to_string()),
+            sort: None,
+            limit: Some(10),
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        assert_eq!(v["total"].as_u64().unwrap(), 1);
+        let hits = v["hits"].as_array().unwrap();
+        assert_eq!(hits[0]["title"], "ByAlice");
+    }
+
+    #[tokio::test]
+    async fn wiki_query_combined_and_filters() {
+        let (tmp, server) = spawn_server();
+        std::fs::write(
+            tmp.path().join("wiki/tools/match.md"),
+            "---\ntitle: Match\ntags: [rust]\nstatus: draft\nauthor: alice\n---\n\nbody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("wiki/tools/wrong-status.md"),
+            "---\ntitle: Wrong\ntags: [rust]\nstatus: published\nauthor: alice\n---\n\nbody\n",
+        )
+        .unwrap();
+        server.searcher.rebuild(&tmp.path().join("wiki")).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: Some("rust".to_string()),
+            category: Some("tools".to_string()),
+            status: Some("draft".to_string()),
+            author: Some("alice".to_string()),
+            sort: None,
+            limit: Some(10),
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        assert_eq!(
+            v["total"].as_u64().unwrap(),
+            1,
+            "AND filter must reject wrong-status; got {resp}"
+        );
+        let hits = v["hits"].as_array().unwrap();
+        assert_eq!(hits[0]["title"], "Match");
+    }
+
+    #[tokio::test]
+    async fn wiki_query_backwards_compat_no_filters() {
+        // Existing callers passing only `query` + `tags` (csv) must still work.
+        let (tmp, server) = spawn_server();
+        std::fs::write(
+            tmp.path().join("wiki/tools/old.md"),
+            "---\ntitle: OldStyle\ntags: [rust]\n---\n\nbody\n",
+        )
+        .unwrap();
+        server.searcher.rebuild(&tmp.path().join("wiki")).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: Some("rust".to_string()),
+            category: None,
+            status: None,
+            author: None,
+            sort: None,
+            limit: None,
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        assert!(v["total"].as_u64().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn wiki_query_csv_tags_split_to_and() {
+        // Existing csv tags="rust,markdown" should split to AND (both tags
+        // required), matching how Path A is documented.
+        let (tmp, server) = spawn_server();
+        std::fs::write(
+            tmp.path().join("wiki/tools/both.md"),
+            "---\ntitle: Both\ntags: [rust, markdown]\n---\n\nboth\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("wiki/tools/only-rust.md"),
+            "---\ntitle: OnlyRust\ntags: [rust]\n---\n\nonly rust\n",
+        )
+        .unwrap();
+        server.searcher.rebuild(&tmp.path().join("wiki")).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: Some("rust,markdown".to_string()),
+            category: None,
+            status: None,
+            author: None,
+            sort: None,
+            limit: None,
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        assert_eq!(v["total"].as_u64().unwrap(), 1);
+        let hits = v["hits"].as_array().unwrap();
+        assert_eq!(hits[0]["title"], "Both");
+    }
+
+    #[tokio::test]
+    async fn wiki_query_sort_title() {
+        let (tmp, server) = spawn_server();
+        std::fs::write(
+            tmp.path().join("wiki/tools/c.md"),
+            "---\ntitle: Charlie\ntags: [t]\n---\n\nc\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("wiki/tools/a.md"),
+            "---\ntitle: Alpha\ntags: [t]\n---\n\na\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("wiki/tools/b.md"),
+            "---\ntitle: Beta\ntags: [t]\n---\n\nb\n",
+        )
+        .unwrap();
+        server.searcher.rebuild(&tmp.path().join("wiki")).unwrap();
+
+        let qargs = WikiQueryArgs {
+            query: String::new(),
+            tags: Some("t".to_string()),
+            category: None,
+            status: None,
+            author: None,
+            sort: Some("title".to_string()),
+            limit: Some(10),
+        };
+        let resp = server.wiki_query(Parameters(qargs));
+        let v = parse(&resp);
+        let hits = v["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0]["title"], "Alpha");
+        assert_eq!(hits[1]["title"], "Beta");
+        assert_eq!(hits[2]["title"], "Charlie");
     }
 }

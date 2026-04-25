@@ -13,6 +13,7 @@ fn make_page(title: &str, tags: &[&str], body: &str) -> (String, Page) {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: body.to_string(),
     };
     (format!("architecture/{slug}.md"), page)
@@ -34,6 +35,9 @@ fn index_and_search() {
         text: Some("attention".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher.search(&query).unwrap();
@@ -55,6 +59,9 @@ fn search_filters_by_tag() {
         text: Some("deep learning".into()),
         tags: vec!["ml".into()],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher.search(&query).unwrap();
@@ -75,6 +82,9 @@ fn search_multi_tag_page() {
         text: Some("content".into()),
         tags: vec!["ml".into()],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert_eq!(searcher.search(&q1).unwrap().total, 1);
@@ -83,6 +93,9 @@ fn search_multi_tag_page() {
         text: Some("content".into()),
         tags: vec!["optimization".into()],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert_eq!(searcher.search(&q2).unwrap().total, 1);
@@ -91,6 +104,9 @@ fn search_multi_tag_page() {
         text: Some("content".into()),
         tags: vec!["nonexistent".into()],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert_eq!(searcher.search(&q3).unwrap().total, 0);
@@ -110,6 +126,9 @@ fn search_filters_by_category() {
         text: Some("attention".into()),
         tags: vec![],
         category: Some("training".into()),
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher.search(&query).unwrap();
@@ -132,6 +151,9 @@ fn remove_page_from_index() {
         text: Some("removed".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert_eq!(searcher.search(&query).unwrap().total, 0);
@@ -150,6 +172,7 @@ fn search_chinese_text() {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: "如果你在创业，陷入焦虑和负面情绪中无法自拔。".to_string(),
     };
     searcher
@@ -162,6 +185,9 @@ fn search_chinese_text() {
         text: Some("创业".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher.search(&q).unwrap();
@@ -188,6 +214,9 @@ fn search_tag_only_no_text() {
         text: None,
         tags: vec!["ml".into()],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher.search(&query).unwrap();
@@ -209,6 +238,9 @@ fn search_category_only_no_text() {
         text: None,
         tags: vec![],
         category: Some("training".into()),
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher.search(&query).unwrap();
@@ -229,6 +261,7 @@ fn search_mixed_chinese_english() {
         author: None,
         generator: None,
         related: None,
+        status: None,
         body: "使用 Claude Code 进行 AI Agent 开发的最佳实践。".to_string(),
     };
     searcher.index_page("tools/ai-agent-dev.md", &page).unwrap();
@@ -239,6 +272,9 @@ fn search_mixed_chinese_english() {
         text: Some("Claude".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert!(searcher.search(&q1).unwrap().total >= 1);
@@ -248,6 +284,9 @@ fn search_mixed_chinese_english() {
         text: Some("开发".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert!(searcher.search(&q2).unwrap().total >= 1);
@@ -295,6 +334,9 @@ fn read_path_works_while_another_searcher_holds_writer() {
         text: Some("attention".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher_b.search(&q).unwrap();
@@ -357,6 +399,9 @@ fn failed_rebuild_preserves_last_committed_index() {
         text: Some("durable".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert_eq!(searcher.search(&query).unwrap().total, 1);
@@ -410,12 +455,18 @@ fn rebuild_rolls_back_writer_after_commit_failure() {
         text: Some("durable".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let replacement_query = SearchQuery {
         text: Some("replacement".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     assert_eq!(searcher.search(&original_query).unwrap().total, 1);
@@ -533,6 +584,9 @@ fn search_sees_external_commit_without_restart() {
         text: Some("external searcher".into()),
         tags: vec![],
         category: None,
+        status: None,
+        author: None,
+        sort: lw_core::search::SearchSort::Relevance,
         limit: 10,
     };
     let results = searcher_a.search(&query).unwrap();
