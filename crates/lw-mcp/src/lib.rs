@@ -372,7 +372,19 @@ impl WikiMcpServer {
         };
 
         match self.searcher.search(&sq) {
-            Ok(results) => {
+            Ok(mut results) => {
+                // Date sorts are pass-through at the search layer (git
+                // history isn't visible to Tantivy). Apply them here via the
+                // shared `lw_core::search::sort_by_created` helper so the
+                // MCP path produces the same ordering as `lw query
+                // --sort created_desc`. Without this call, agents asking for
+                // `sort: "created_desc"` silently got BM25-ordered results
+                // (issue #41 review feedback).
+                let wiki_dir = self.wiki_root.join("wiki");
+                lw_core::search::sort_by_created(&mut results.hits, &wiki_dir, sort, |h| {
+                    h.path.as_str()
+                });
+
                 let hits: Vec<serde_json::Value> = results
                     .hits
                     .iter()

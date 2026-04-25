@@ -109,6 +109,70 @@ impl Default for SearchQuery {
 }
 
 // ---------------------------------------------------------------------------
+// Post-search helpers (date sort)
+// ---------------------------------------------------------------------------
+
+/// Sort `items` by their first-commit timestamp from `git log`. Generic over
+/// the item type so the CLI can sort `Vec<HitWithFreshness>` and the MCP
+/// handler can sort raw `Vec<SearchHit>` through the same code path.
+///
+/// Why this lives in `lw_core::search` rather than each caller: per the
+/// repo's "All time-related data comes from `git log`" rule, every layer that
+/// surfaces date order must agree on what "newest" means. A duplicated
+/// implementation in MCP (which previously had none — see issue #41 review
+/// feedback) silently let `created_desc` fall through as BM25 order.
+///
+/// Items with no git history (uncommitted files) are placed last regardless
+/// of direction, so unindexed pages are easy to spot rather than hidden at
+/// the top of a `created_desc` list.
+///
+/// `path_of` extracts the wiki-relative path string from each item; the
+/// helper joins it onto `wiki_dir` before calling `git`.
+pub fn sort_by_created<T, F>(items: &mut [T], wiki_dir: &Path, sort: SearchSort, path_of: F)
+where
+    F: Fn(&T) -> &str,
+{
+    use crate::git::page_first_commit_time;
+    use std::cmp::Ordering;
+
+    // Only the date sorts need git lookups; bail early on the others so we
+    // don't pay for a sort that's a no-op or already handled in-memory.
+    let direction = match sort {
+        SearchSort::CreatedDesc | SearchSort::CreatedAsc => sort,
+        _ => return,
+    };
+
+    // Cache per-path lookups: `git log` is slow, and the same path showing
+    // up twice in a result set (shouldn't happen in practice but cheap to
+    // guard against) would otherwise hit `git` twice.
+    let mut times: std::collections::HashMap<String, Option<i64>> =
+        std::collections::HashMap::new();
+    for item in items.iter() {
+        let p = path_of(item);
+        if !times.contains_key(p) {
+            let t = page_first_commit_time(&wiki_dir.join(p)).ok().flatten();
+            times.insert(p.to_string(), t);
+        }
+    }
+
+    items.sort_by(|a, b| {
+        let ta = times.get(path_of(a)).copied().flatten();
+        let tb = times.get(path_of(b)).copied().flatten();
+        match (ta, tb) {
+            (Some(x), Some(y)) => match direction {
+                SearchSort::CreatedDesc => y.cmp(&x),
+                SearchSort::CreatedAsc => x.cmp(&y),
+                _ => Ordering::Equal,
+            },
+            // Pages without git history sort to the end regardless of order.
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Trait
 // ---------------------------------------------------------------------------
 

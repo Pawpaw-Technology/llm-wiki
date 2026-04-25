@@ -41,14 +41,26 @@ pub fn page_age_days(path: &Path) -> Option<i64> {
 /// Used by `lw query --sort created_desc/created_asc` (issue #41) to order
 /// hits by creation time. The search index doesn't have access to git, so
 /// the CLI does this lookup post-hoc on the result set.
+///
+/// Anchors `git` to the file's parent directory via `-C`, so the lookup
+/// works regardless of the calling process's cwd. Without that anchor,
+/// `lw serve` (whose cwd is whatever the agent launched it from) and the
+/// MCP unit tests (cwd = workspace root) would both see `git: not a git
+/// repository` and silently return `None` for every page.
 #[tracing::instrument]
 pub fn page_first_commit_time(path: &Path) -> Result<Option<i64>> {
     let path_str = match path.to_str() {
         Some(s) => s,
         None => return Ok(None),
     };
+    // `-C <dir>` makes git locate the repo by walking up from `dir`. Use
+    // the file's parent so a file in a sub-directory of the repo still
+    // resolves correctly.
+    let cwd = path.parent().and_then(|p| p.to_str()).unwrap_or(".");
     let output = Command::new("git")
         .args([
+            "-C",
+            cwd,
             "log",
             "--follow",
             "--reverse",

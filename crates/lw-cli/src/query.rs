@@ -105,15 +105,12 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     };
 
     // Date-based sort modes need git-history info, which the search layer
-    // doesn't have. Apply them here, after freshness enrichment, by reading
-    // each hit's first-commit timestamp via `lw_core::git`. Title/Relevance
-    // sort already happened inside the searcher.
-    let enriched = match sort {
-        SearchSort::CreatedDesc | SearchSort::CreatedAsc => {
-            sort_by_created(enriched, &wiki_dir, sort)
-        }
-        SearchSort::Title | SearchSort::Relevance => enriched,
-    };
+    // doesn't have. Apply them here, after freshness enrichment, via the
+    // shared `lw_core::search::sort_by_created` helper so CLI and MCP agree
+    // on what "newest" means. Title/Relevance sort already happened inside
+    // the searcher.
+    let mut enriched = enriched;
+    lw_core::search::sort_by_created(&mut enriched, &wiki_dir, sort, |h| h.hit.path.as_str());
 
     let total = if args.stale {
         enriched.len()
@@ -122,46 +119,6 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     };
     output::print_query_results_with_freshness(args.text, &enriched, total, args.format);
     Ok(())
-}
-
-/// Sort enriched hits by their first git-commit timestamp. Pages with no
-/// git history (uncommitted) are placed last, oldest-first, so they're easy
-/// to spot.
-fn sort_by_created(
-    mut hits: Vec<HitWithFreshness>,
-    wiki_dir: &Path,
-    sort: SearchSort,
-) -> Vec<HitWithFreshness> {
-    use lw_core::git::page_first_commit_time;
-
-    // Cache per-path lookups in case the same path slipped in twice (it
-    // shouldn't, but git invocations are slow enough to warrant it).
-    let mut times: std::collections::HashMap<String, Option<i64>> =
-        std::collections::HashMap::new();
-    for h in &hits {
-        times.entry(h.hit.path.clone()).or_insert_with(|| {
-            page_first_commit_time(&wiki_dir.join(&h.hit.path))
-                .ok()
-                .flatten()
-        });
-    }
-
-    hits.sort_by(|a, b| {
-        let ta = times.get(&a.hit.path).copied().flatten();
-        let tb = times.get(&b.hit.path).copied().flatten();
-        match (ta, tb) {
-            (Some(x), Some(y)) => match sort {
-                SearchSort::CreatedDesc => y.cmp(&x),
-                SearchSort::CreatedAsc => x.cmp(&y),
-                _ => std::cmp::Ordering::Equal,
-            },
-            // Pages without git history sort to the end regardless of order.
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
-    });
-    hits
 }
 
 #[cfg(test)]
