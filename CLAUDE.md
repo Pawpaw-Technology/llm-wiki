@@ -191,6 +191,7 @@ Switching workspaces requires restarting the agent tool — MCP processes bind t
    - `lw integrate <tool>` against an MCP entry written by an older lw (regression for the 0.2.0–0.2.3 cross-release Conflict bug)
    - `lw query "..."` **while `lw serve` is running** against the same vault (regression for the 0.2.4 LockBusy bug)
    - `lw doctor` — all integrations should report OK
+   - **Isolation is non-negotiable.** Any smoke that exercises `lw new` / `lw write` / `lw ingest` / `lw sync` MUST scope to a throwaway directory via `--root /tmp/lw-smoke-XXXX` (or `LW_WIKI_ROOT=/tmp/lw-smoke-XXXX`). Workspace resolution is `--root > LW_WIKI_ROOT > registered workspace > cwd auto-discover`, so without explicit scoping the binary resolves to the **registered workspace** (`~/.llm-wiki/config.toml`) — silently writing test pages and auto-committing into the maintainer's real wiki. `cd /tmp/foo && lw new ...` is NOT enough; the registry beats cwd. (Polluted `llm-wiki-data` once on 2026-04-25 with `9816b42 docs(wiki): create wiki/tools/foo.md`; reset locally before push, but use the rule.)
 
 ## Observability
 
