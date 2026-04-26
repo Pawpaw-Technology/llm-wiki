@@ -2783,6 +2783,72 @@ Placeholder.
         );
     }
 
+    /// AC-1b: The noop early-return path in `append_section` mode must also
+    /// include `unlinked_mentions: []`. Spec criterion #1 says the field is
+    /// ALWAYS present (empty array when none). Before this fix the noop path
+    /// returned early without the field.
+    #[test]
+    fn wiki_write_append_section_noop_response_still_includes_unlinked_mentions() {
+        // Spec criterion #1: the field must be ALWAYS present (empty array when
+        // none). The noop path (apply_append returns None on empty content)
+        // previously omitted the field entirely.
+        let (tmp, server) = spawn_server();
+
+        // Seed a target page so the alias index has something to work with
+        // (even though a noop should return [] regardless).
+        seed_page(
+            tmp.path(),
+            "architecture/transformer-architecture.md",
+            "---\ntitle: Transformer Architecture\ntags: []\n---\n\nThe transformer model.\n",
+        );
+        lw_core::aliases::rebuild_index(tmp.path()).unwrap();
+
+        // Create a base page to append a section onto.
+        seed_page(
+            tmp.path(),
+            "tools/existing-page.md",
+            "---\ntitle: Existing Page\ntags: []\n---\n\n## Overview\nSome content.\n",
+        );
+
+        // Call wiki_write in append_section mode with empty content — this
+        // triggers the noop path (apply_append returns None).
+        let args = WikiWriteArgs {
+            path: "tools/existing-page.md".to_string(),
+            mode: "append_section".to_string(),
+            section: Some("Overview".to_string()),
+            content: "".to_string(), // empty → noop
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+
+        // The noop path must return status ok with noop:true.
+        assert_eq!(
+            v.get("status").and_then(|s| s.as_str()),
+            Some("ok"),
+            "noop response must have status:ok; got: {resp}"
+        );
+        assert_eq!(
+            v.get("noop").and_then(|n| n.as_bool()),
+            Some(true),
+            "noop response must have noop:true; got: {resp}"
+        );
+
+        // The field must ALWAYS be present — even on the noop path.
+        assert!(
+            v.get("unlinked_mentions").is_some(),
+            "unlinked_mentions must always be present in append_section noop response; got: {resp}"
+        );
+        let mentions = v["unlinked_mentions"].as_array().unwrap();
+        assert!(
+            mentions.is_empty(),
+            "noop path must return [] for unlinked_mentions (no scan happened); got: {mentions:?}"
+        );
+    }
+
     /// AC-3: `wiki_new` response always includes `unlinked_mentions`.
     /// On a fresh vault with no indexed pages the field is `[]`.
     #[test]
