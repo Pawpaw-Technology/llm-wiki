@@ -710,13 +710,16 @@ impl WikiMcpServer {
                     match lw_core::section::apply_append(body, section_name, &args.content) {
                         Some(result) => result,
                         None => {
-                            // Empty content — noop
+                            // Empty content — noop. The field must ALWAYS be
+                            // present per spec criterion #1; empty array is
+                            // correct here because no scan happened.
                             return serde_json::json!({
                                 "status": "ok",
                                 "path": args.path,
                                 "mode": args.mode,
                                 "section": section_name,
                                 "noop": true,
+                                "unlinked_mentions": [],
                             })
                             .to_string();
                         }
