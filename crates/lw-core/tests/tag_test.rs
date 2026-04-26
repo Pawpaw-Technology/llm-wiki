@@ -11,6 +11,7 @@ fn make_page(title: &str, tags: &[&str]) -> Page {
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: String::new(),
     }
 }

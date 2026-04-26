@@ -104,6 +104,7 @@ pub fn make_page(title: &str, tags: &[&str], decay: &str, body: &str) -> Page {
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: body.to_string(),
     }
 }

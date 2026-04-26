@@ -36,6 +36,7 @@ fn write_and_read_page() {
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: "Hello world.\n".to_string(),
     };
     let path = root.join("wiki/architecture/test-page.md");
@@ -60,6 +61,7 @@ fn list_pages_finds_markdown() {
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: "A.\n".into(),
     };
     let p2 = Page {
@@ -71,6 +73,7 @@ fn list_pages_finds_markdown() {
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: "B.\n".into(),
     };
     write_page(&root.join("wiki/architecture/a.md"), &p1).unwrap();
@@ -174,6 +177,7 @@ fn write_page_leaves_no_tmp_file() {
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: "content\n".to_string(),
     };
     let path = root.join("wiki/architecture/atomic-test.md");
@@ -236,6 +240,7 @@ fn write_page_does_not_follow_victim_symlink() {
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: "safe\n".to_string(),
     };
     write_page(&page_path, &page).unwrap();

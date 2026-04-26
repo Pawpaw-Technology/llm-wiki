@@ -303,6 +303,7 @@ pub fn new_page(
         generator: None,
         related: None,
         status: None,
+        aliases: vec![],
         body: template,
     };
 

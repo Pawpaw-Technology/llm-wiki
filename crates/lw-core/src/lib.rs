@@ -1,3 +1,4 @@
+pub mod aliases;
 pub mod backlinks;
 pub mod error;
 pub mod fs;

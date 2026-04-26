@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "lw-cli"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "lw-core"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "comrak",
  "gray_matter",
@@ -1094,11 +1094,12 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]
 name = "lw-mcp"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "lw-core",

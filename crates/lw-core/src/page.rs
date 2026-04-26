@@ -21,6 +21,12 @@ pub struct Frontmatter {
     /// `archived`. Stored verbatim and indexed for `lw query --status` filtering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Alternate names for this page. Free-form list, no schema validation.
+    /// Consumed by the alias index (`lw_core::aliases`) so cross-page references
+    /// like `[[short-name]]` and unlinked-mention detection (#42) can resolve to
+    /// the canonical page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +41,8 @@ pub struct Page {
     /// Optional lifecycle status (`draft`/`published`/`archived`/etc.). See
     /// [`Frontmatter::status`].
     pub status: Option<String>,
+    /// Alternate names for this page. See [`Frontmatter::aliases`].
+    pub aliases: Vec<String>,
     pub body: String,
 }
 
@@ -49,6 +57,7 @@ impl Page {
             generator: None,
             related: None,
             status: None,
+            aliases: vec![],
             body: body.to_string(),
         }
     }
@@ -80,6 +89,7 @@ impl Page {
             generator: fm.generator,
             related: fm.related,
             status: fm.status,
+            aliases: fm.aliases,
             body: parsed.content,
         })
     }
@@ -94,6 +104,7 @@ impl Page {
             generator: self.generator.clone(),
             related: self.related.clone(),
             status: self.status.clone(),
+            aliases: self.aliases.clone(),
         }
     }
 
