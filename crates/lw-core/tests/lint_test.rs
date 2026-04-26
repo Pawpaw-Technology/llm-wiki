@@ -1,7 +1,7 @@
 mod common;
 
 use common::{TestWiki, make_page};
-use lw_core::lint::run_lint;
+use lw_core::lint::{UnlinkedMentionFinding, run_lint};
 
 #[test]
 fn lint_empty_wiki_returns_clean_report() {
@@ -367,5 +367,273 @@ fn lint_excludes_journal_pages_from_orphans() {
             .iter()
             .any(|p| p.contains("2026-04-25.md") || p.starts_with("_journal/")),
         "_journal/* pages must be excluded: {orphan_paths:?}"
+    );
+}
+
+// ─── Issue #102: unlinked-mentions lint rule ──────────────────────────────────
+
+/// Acceptance bullet 1: rule fires on unlinked mention (positive case).
+/// A page whose body contains "tantivy" (an unlinked mention of tools/tantivy.md)
+/// must produce exactly one finding in `unlinked_mentions`.
+#[test]
+fn lint_unlinked_mentions_fires_on_unlinked_term() {
+    let wiki = TestWiki::new();
+
+    // The target page: tantivy
+    let tantivy = make_page(
+        "Tantivy",
+        &["tools"],
+        "normal",
+        "Tantivy is a full-text search engine library.",
+    );
+    wiki.write_page("tools/tantivy.md", &tantivy);
+
+    // A page that mentions tantivy but does NOT link it
+    let comrak = make_page(
+        "Comrak",
+        &["tools"],
+        "normal",
+        "Comrak is a CommonMark parser. We also use tantivy for search.",
+    );
+    wiki.write_page("tools/comrak.md", &comrak);
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+    assert_eq!(
+        report.unlinked_mentions.len(),
+        1,
+        "expected 1 unlinked-mention finding, got: {:?}",
+        report.unlinked_mentions
+    );
+    let f = &report.unlinked_mentions[0];
+    assert!(
+        f.path.contains("comrak.md"),
+        "finding path must point to comrak.md, got: {:?}",
+        f.path
+    );
+    assert_eq!(f.term, "tantivy", "term must be verbatim: {:?}", f.term);
+    assert_eq!(
+        f.target, "tantivy",
+        "target must be slug of tantivy page: {:?}",
+        f.target
+    );
+    assert_eq!(
+        f.line, 1,
+        "line must be 1 (body has only one line): {:?}",
+        f.line
+    );
+}
+
+/// Acceptance bullet 2: silent on already-linked mention (negative case).
+/// A page that uses `[[tantivy]]` must produce no unlinked-mention findings.
+#[test]
+fn lint_unlinked_mentions_silent_when_already_linked() {
+    let wiki = TestWiki::new();
+
+    let tantivy = make_page("Tantivy", &["tools"], "normal", "Full-text search library.");
+    wiki.write_page("tools/tantivy.md", &tantivy);
+
+    // Already linked with [[tantivy]]
+    let comrak = make_page(
+        "Comrak",
+        &["tools"],
+        "normal",
+        "Comrak is a CommonMark parser. We also use [[tantivy]] for search.",
+    );
+    wiki.write_page("tools/comrak.md", &comrak);
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+    assert!(
+        report.unlinked_mentions.is_empty(),
+        "already-linked term must not produce findings: {:?}",
+        report.unlinked_mentions
+    );
+}
+
+/// Acceptance bullet 3: JSON output shape exactly matches the spec.
+/// `{"rule": "unlinked-mentions", "path": "...", "line": N, "term": "...", "target": "..."}`
+#[test]
+fn lint_unlinked_mentions_json_shape() {
+    let wiki = TestWiki::new();
+
+    let tantivy = make_page("Tantivy", &["tools"], "normal", "Full-text search library.");
+    wiki.write_page("tools/tantivy.md", &tantivy);
+
+    let comrak = make_page(
+        "Comrak",
+        &["tools"],
+        "normal",
+        "We use tantivy for indexing.",
+    );
+    wiki.write_page("tools/comrak.md", &comrak);
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+    assert_eq!(report.unlinked_mentions.len(), 1);
+
+    let f = &report.unlinked_mentions[0];
+    // Serialize to JSON and verify exact field names and types.
+    let json_val = serde_json::to_value(f).expect("must serialize");
+    assert_eq!(
+        json_val["rule"], "unlinked-mentions",
+        "rule field must be 'unlinked-mentions': {json_val}"
+    );
+    assert!(
+        json_val["path"].is_string(),
+        "path must be a string: {json_val}"
+    );
+    assert!(
+        json_val["line"].is_number(),
+        "line must be a number: {json_val}"
+    );
+    assert_eq!(json_val["term"], "tantivy", "term must match: {json_val}");
+    assert_eq!(
+        json_val["target"], "tantivy",
+        "target must be the slug: {json_val}"
+    );
+    // No extra fields not in the spec (path, rule, line, term, target only).
+    let obj = json_val.as_object().unwrap();
+    for key in obj.keys() {
+        assert!(
+            ["rule", "path", "line", "term", "target"].contains(&key.as_str()),
+            "unexpected JSON field: {key}"
+        );
+    }
+}
+
+/// Acceptance bullet 4: text output shape matches the spec exactly.
+/// Format: `wiki/tools/comrak.md:12 — "tantivy" could link to [[tantivy]]`
+/// (em-dash U+2014, double quotes around term, double brackets around target)
+#[test]
+fn lint_unlinked_mentions_text_format() {
+    let wiki = TestWiki::new();
+
+    let tantivy = make_page("Tantivy", &["tools"], "normal", "Full-text search library.");
+    wiki.write_page("tools/tantivy.md", &tantivy);
+
+    let comrak = make_page(
+        "Comrak",
+        &["tools"],
+        "normal",
+        "We use tantivy for indexing.",
+    );
+    wiki.write_page("tools/comrak.md", &comrak);
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+    assert_eq!(report.unlinked_mentions.len(), 1);
+
+    let f = &report.unlinked_mentions[0];
+    let text = f.to_text_line();
+    // Must contain the em-dash (U+2014), quoted term, and [[slug]] brackets.
+    assert!(
+        text.contains('\u{2014}'),
+        "text line must contain em-dash (—): {text:?}"
+    );
+    assert!(
+        text.contains("\"tantivy\""),
+        "text line must quote the term: {text:?}"
+    );
+    assert!(
+        text.contains("[[tantivy]]"),
+        "text line must use [[slug]] for target: {text:?}"
+    );
+    assert!(
+        text.contains(":1"),
+        "text line must contain line number ':1': {text:?}"
+    );
+    // Path portion before the colon must contain the page path.
+    assert!(
+        text.starts_with("wiki/") || text.contains("comrak.md"),
+        "text line must start with wiki-relative path: {text:?}"
+    );
+}
+
+/// Acceptance bullet 5: aggregate exit code — `lw lint` exits 1 when
+/// unlinked-mentions findings exist. Tested at the library level by checking
+/// that `has_findings()` returns true when `unlinked_mentions` is non-empty.
+#[test]
+fn lint_report_has_findings_when_unlinked_mentions_present() {
+    let wiki = TestWiki::new();
+
+    let tantivy = make_page("Tantivy", &["tools"], "normal", "Full-text search library.");
+    wiki.write_page("tools/tantivy.md", &tantivy);
+
+    let comrak = make_page(
+        "Comrak",
+        &["tools"],
+        "normal",
+        "We use tantivy for indexing.",
+    );
+    wiki.write_page("tools/comrak.md", &comrak);
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+    assert!(
+        report.has_findings(),
+        "has_findings() must return true when unlinked_mentions is non-empty: {:?}",
+        report
+    );
+
+    // Clean wiki (no pages) must not have findings.
+    let wiki2 = TestWiki::new();
+    let clean = run_lint(wiki2.root(), None).expect("lint should succeed");
+    assert!(
+        !clean.has_findings(),
+        "has_findings() must return false on a clean wiki: {:?}",
+        clean
+    );
+}
+
+/// Acceptance bullet 6: ambiguous match — a term that matches multiple pages
+/// produces one finding per matched page (one-finding-per-offense pattern).
+#[test]
+fn lint_unlinked_mentions_ambiguous_match_produces_one_finding_per_target() {
+    let wiki = TestWiki::new();
+
+    // Two pages with the same alias "search"
+    let tantivy = make_page("Tantivy", &["tools"], "normal", "Full-text search library.");
+    wiki.write_page("tools/tantivy.md", &tantivy);
+
+    // A second page that also uses "tantivy" as an alias
+    let mut meilisearch = make_page(
+        "Meilisearch",
+        &["tools"],
+        "normal",
+        "Another search engine.",
+    );
+    meilisearch.aliases = vec!["tantivy".to_string()];
+    wiki.write_page("tools/meilisearch.md", &meilisearch);
+
+    // A page that mentions "tantivy" without linking
+    let page = make_page(
+        "Comrak",
+        &["tools"],
+        "normal",
+        "We use tantivy for full-text search.",
+    );
+    wiki.write_page("tools/comrak.md", &page);
+
+    let report = run_lint(wiki.root(), None).expect("lint should succeed");
+    // The mention "tantivy" is ambiguous (resolves to tantivy + meilisearch),
+    // so we expect 2 findings — one per matched page.
+    let findings_for_comrak: Vec<&UnlinkedMentionFinding> = report
+        .unlinked_mentions
+        .iter()
+        .filter(|f| f.path.contains("comrak.md"))
+        .collect();
+    assert_eq!(
+        findings_for_comrak.len(),
+        2,
+        "ambiguous term must produce one finding per matched page: {:?}",
+        findings_for_comrak
+    );
+    let targets: Vec<&str> = findings_for_comrak
+        .iter()
+        .map(|f| f.target.as_str())
+        .collect();
+    assert!(
+        targets.contains(&"tantivy"),
+        "findings must include tantivy slug: {targets:?}"
+    );
+    assert!(
+        targets.contains(&"meilisearch"),
+        "findings must include meilisearch slug: {targets:?}"
     );
 }

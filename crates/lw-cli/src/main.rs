@@ -187,7 +187,7 @@ enum Commands {
 
     /// Check wiki health: stale pages, broken links, orphans, TODO stubs
     #[command(
-        after_help = "Examples:\n  lw lint\n  lw lint --format json\n  lw lint --category architecture"
+        after_help = "Examples:\n  lw lint\n  lw lint --format json\n  lw lint --category architecture\n  lw lint --rule unlinked-mentions"
     )]
     Lint {
         /// Filter by category
@@ -196,6 +196,9 @@ enum Commands {
         /// Output format (human or json)
         #[arg(short, long, default_value = "human")]
         format: Format,
+        /// Run only the named rule (e.g. unlinked-mentions). Default: all rules.
+        #[arg(long)]
+        rule: Option<String>,
     },
 
     /// Start MCP server (stdio)
@@ -566,8 +569,12 @@ fn main() {
                 process::exit(1);
             }
         },
-        Commands::Lint { category, format } => match resolve_root(cli.root) {
-            Ok(root) => lint::run(&root, &category, &format),
+        Commands::Lint {
+            category,
+            format,
+            rule,
+        } => match resolve_root(cli.root) {
+            Ok(root) => lint::run(&root, &category, &format, rule.as_deref()),
             Err(e) => {
                 eprintln!("Error: {e}");
                 process::exit(1);

@@ -1,11 +1,46 @@
+use crate::aliases::{AliasIndex, build_index};
+use crate::backlinks::slug_from_wiki_path;
 use crate::fs::{category_from_path, list_pages, load_schema, read_page};
 use crate::git::{FreshnessLevel, compute_freshness, page_age_days};
 use crate::link::{extract_wiki_links, resolve_link};
+use crate::mentions::find_unlinked_mentions;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::LazyLock;
+
+/// A single unlinked-mention finding produced by the `unlinked-mentions` rule.
+/// JSON shape (per issue #102 spec):
+/// `{"rule": "unlinked-mentions", "path": "...", "line": N, "term": "...", "target": "..."}`
+#[derive(Debug, Clone, Serialize)]
+pub struct UnlinkedMentionFinding {
+    /// Always `"unlinked-mentions"` — present in every serialized record so
+    /// a flat list of heterogeneous findings remains self-describing.
+    pub rule: String,
+    /// Wiki-relative path to the page that contains the mention
+    /// (e.g. `wiki/tools/comrak.md`).
+    pub path: String,
+    /// 1-based line number in the page body where the mention occurs.
+    pub line: u32,
+    /// Verbatim text from the body that matched (preserves original casing).
+    pub term: String,
+    /// Slug of the page the term resolves to (not the full path).
+    pub target: String,
+}
+
+impl UnlinkedMentionFinding {
+    /// Format this finding as the canonical human-readable text line:
+    /// `wiki/tools/comrak.md:12 — "tantivy" could link to [[tantivy]]`
+    ///
+    /// Uses an em-dash (U+2014) per the issue #102 text-format spec.
+    pub fn to_text_line(&self) -> String {
+        format!(
+            "{}:{} \u{2014} \"{}\" could link to [[{}]]",
+            self.path, self.line, self.term, self.target
+        )
+    }
+}
 
 static INDEX_LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\]\(([^)]+\.md)\)").expect("INDEX_LINK_RE is a valid regex"));
@@ -39,6 +74,26 @@ pub struct LintReport {
     /// Issue #37: signals captures that haven't been triaged.
     #[serde(default)]
     pub stale_journal_pages: Vec<LintFinding>,
+    /// Unlinked mentions found across all vault pages — issue #102.
+    /// One entry per (page, term, target) triple; ambiguous matches produce
+    /// multiple entries (one per matched page), following the one-finding-
+    /// per-offense pattern used by the other rules above.
+    #[serde(default)]
+    pub unlinked_mentions: Vec<UnlinkedMentionFinding>,
+}
+
+impl LintReport {
+    /// Returns `true` if any rule produced at least one finding.
+    /// Used by the CLI to decide the exit code: 0 = clean, 1 = findings.
+    pub fn has_findings(&self) -> bool {
+        !self.todo_pages.is_empty()
+            || !self.broken_related.is_empty()
+            || !self.orphan_pages.is_empty()
+            || !self.missing_concepts.is_empty()
+            || !self.stale_journal_pages.is_empty()
+            || self.freshness.stale > 0
+            || !self.unlinked_mentions.is_empty()
+    }
 }
 
 /// Run all lint checks on the wiki at `root`.
@@ -195,6 +250,11 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
             })
             .collect();
 
+    // Check 7: Unlinked mentions — issue #102.
+    // Build the alias index once (in-memory; no sentinel required here since
+    // lint is a read-only pass and the index is ephemeral).
+    let unlinked_mentions = run_unlinked_mentions(root, category, &page_paths, &wiki_dir);
+
     Ok(LintReport {
         todo_pages,
         broken_related,
@@ -207,5 +267,80 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
             stale_pages,
         },
         stale_journal_pages,
+        unlinked_mentions,
     })
+}
+
+/// Build the alias index and scan every page in `page_paths` for unlinked
+/// mentions. Returns one `UnlinkedMentionFinding` per `(page, term, target)`
+/// triple — ambiguous matches produce multiple findings, one per matched page.
+///
+/// Pages in `_journal/` are excluded: journal entries are intentionally
+/// capture-not-linked (issue #39). The `category` filter is honoured the same
+/// way the other checks honour it.
+fn run_unlinked_mentions(
+    root: &Path,
+    category: Option<&str>,
+    page_paths: &[std::path::PathBuf],
+    wiki_dir: &Path,
+) -> Vec<UnlinkedMentionFinding> {
+    // Build an in-memory alias index from the vault. Errors (e.g. an
+    // unreadable vault) are silently ignored — lint degrades gracefully
+    // rather than aborting the entire report.
+    let index: AliasIndex = match build_index(root) {
+        Ok(idx) => idx,
+        Err(_) => return Vec::new(),
+    };
+
+    if index.terms.is_empty() {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for rel_path in page_paths {
+        // Apply the same category filter as other checks.
+        let cat = category_from_path(rel_path).unwrap_or_default();
+        if let Some(filter) = category
+            && cat != filter
+        {
+            continue;
+        }
+
+        let rel_str = rel_path.to_string_lossy();
+
+        // Exclude journal pages — they are intentionally un-linked captures.
+        if rel_str.starts_with("_journal/") || rel_str.starts_with("_journal\\") {
+            continue;
+        }
+        // Exclude special files.
+        if matches!(rel_str.as_ref(), "index.md" | "log.md") {
+            continue;
+        }
+
+        let abs_path = wiki_dir.join(rel_path);
+        let page = match read_page(&abs_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        // The slug for this page (used to suppress self-mentions).
+        let self_slug = slug_from_wiki_path(rel_path).unwrap_or_default();
+
+        // The path stored in findings uses `wiki/<rel>` form so it matches
+        // what the CLI displays (e.g. `wiki/tools/comrak.md`).
+        let finding_path = format!("wiki/{}", rel_str.replace('\\', "/"));
+
+        for mention in find_unlinked_mentions(&page.body, &index, &self_slug) {
+            findings.push(UnlinkedMentionFinding {
+                rule: "unlinked-mentions".to_string(),
+                path: finding_path.clone(),
+                line: mention.line,
+                term: mention.term,
+                target: mention.target_slug,
+            });
+        }
+    }
+
+    findings
 }

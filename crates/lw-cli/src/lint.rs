@@ -1,9 +1,32 @@
 use crate::output::Format;
 use lw_core::lint::{self, LintReport};
 use std::path::Path;
+use std::process;
 
-pub fn run(root: &Path, category: &Option<String>, output_format: &Format) -> anyhow::Result<()> {
-    let report = lint::run_lint(root, category.as_deref())?;
+/// Run the lint command.
+///
+/// `rule` — when `Some("unlinked-mentions")`, run only that rule and zero-out
+/// all other rule results so the report (human or JSON) is scoped to just the
+/// requested rule. Unknown rule names are silently treated as "all rules" to
+/// stay forward-compatible.
+///
+/// Exit codes (per issue #102 + existing lint contract):
+///   0 — clean (no findings from any enabled rule)
+///   1 — at least one finding
+pub fn run(
+    root: &Path,
+    category: &Option<String>,
+    output_format: &Format,
+    rule: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut report = lint::run_lint(root, category.as_deref())?;
+
+    // Apply rule filter: suppress all findings except those from the named rule.
+    if let Some(rule_name) = rule {
+        apply_rule_filter(&mut report, rule_name);
+    }
+
+    let has_findings = report.has_findings();
 
     match output_format {
         Format::Json => {
@@ -13,7 +36,30 @@ pub fn run(root: &Path, category: &Option<String>, output_format: &Format) -> an
             print_human_report(&report);
         }
     }
+
+    if has_findings {
+        process::exit(1);
+    }
     Ok(())
+}
+
+/// Zero out every rule except `rule_name` so the report is scoped to that
+/// single rule. Unknown rule names leave the report unchanged.
+fn apply_rule_filter(report: &mut LintReport, rule_name: &str) {
+    match rule_name {
+        "unlinked-mentions" => {
+            report.todo_pages.clear();
+            report.broken_related.clear();
+            report.orphan_pages.clear();
+            report.missing_concepts.clear();
+            report.stale_journal_pages.clear();
+            report.freshness.stale = 0;
+            report.freshness.stale_pages.clear();
+        }
+        _ => {
+            // Unknown rule — run all rules (forward-compatible default).
+        }
+    }
 }
 
 fn print_human_report(report: &LintReport) {
@@ -22,7 +68,8 @@ fn print_human_report(report: &LintReport) {
         + report.orphan_pages.len()
         + report.missing_concepts.len()
         + report.stale_journal_pages.len()
-        + report.freshness.stale;
+        + report.freshness.stale
+        + report.unlinked_mentions.len();
 
     println!("Wiki Lint Report");
     println!("================");
@@ -67,6 +114,14 @@ fn print_human_report(report: &LintReport) {
         );
         for f in &report.stale_journal_pages {
             println!("  - {}: {}", f.path, f.detail);
+        }
+        println!();
+    }
+
+    if !report.unlinked_mentions.is_empty() {
+        println!("Unlinked Mentions ({}):", report.unlinked_mentions.len());
+        for f in &report.unlinked_mentions {
+            println!("  {}", f.to_text_line());
         }
         println!();
     }
