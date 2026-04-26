@@ -1,6 +1,7 @@
 //! MCP server for LLM Wiki.
 //! Provides wiki_query, wiki_read, wiki_browse, wiki_tags, wiki_write, wiki_ingest, wiki_lint, wiki_stats tools.
 
+use lw_core::aliases;
 use lw_core::backlinks;
 use lw_core::fs::{
     NewPageRequest, atomic_write, category_from_path, list_pages, new_page, read_page,
@@ -47,6 +48,34 @@ fn attach_warnings(response: &mut serde_json::Value, dirty_warning: Option<Strin
     {
         obj.insert("warnings".to_string(), serde_json::json!([w]));
     }
+}
+
+/// Scan `scan_text` for unlinked mentions against the alias index built from
+/// `wiki_root`, excluding self-mentions for `self_slug`. Returns a JSON array
+/// value — always present, empty array when no mentions are found.
+///
+/// If the alias index cannot be loaded (e.g. fresh vault with no pages) the
+/// function silently returns `[]` so write operations are never blocked by an
+/// index error.
+fn unlinked_mentions_json(wiki_root: &Path, scan_text: &str, self_slug: &str) -> serde_json::Value {
+    // Ensure the persisted index is up-to-date before loading it. On a fresh
+    // vault this is a no-op if the sentinel exists; on first use it triggers
+    // a full build. Errors are non-fatal — we return [] so the write succeeds.
+    if let Err(e) = aliases::ensure_index(wiki_root) {
+        tracing::warn!("alias index ensure failed (unlinked_mentions will be empty): {e}");
+        return serde_json::json!([]);
+    }
+
+    let index = match aliases::build_index(wiki_root) {
+        Ok(idx) => idx,
+        Err(e) => {
+            tracing::warn!("alias index load failed (unlinked_mentions will be empty): {e}");
+            return serde_json::json!([]);
+        }
+    };
+
+    let mentions = lw_core::mentions::find_unlinked_mentions(scan_text, &index, self_slug);
+    serde_json::json!(mentions)
 }
 
 /// Run the auto-commit policy for an MCP write tool.
@@ -633,11 +662,22 @@ impl WikiMcpServer {
                     McpCommitResult::Ok { dirty_warning } => dirty_warning,
                 };
 
+                // Scan the full written content for unlinked mentions (issue #103).
+                // Self-slug prevents the page from suggesting a link to itself.
+                let self_slug = abs_path
+                    .strip_prefix(self.wiki_root.join("wiki"))
+                    .ok()
+                    .and_then(|rel| backlinks::slug_from_wiki_path(rel))
+                    .unwrap_or_default();
+                let unlinked_mentions =
+                    unlinked_mentions_json(&self.wiki_root, &args.content, &self_slug);
+
                 let mut response = serde_json::json!({
                     "status": "ok",
                     "path": args.path,
                     "title": page.title,
                     "tags": page.tags,
+                    "unlinked_mentions": unlinked_mentions,
                 });
                 attach_warnings(&mut response, dirty_warning);
                 response.to_string()
@@ -735,12 +775,24 @@ impl WikiMcpServer {
                     McpCommitResult::Ok { dirty_warning } => dirty_warning,
                 };
 
+                // Scan ONLY the written section content for unlinked mentions
+                // (issue #103: upsert_section scope limit). Sibling sections must
+                // not contribute — the agent only edited this section's text.
+                let self_slug_sec = abs_path
+                    .strip_prefix(self.wiki_root.join("wiki"))
+                    .ok()
+                    .and_then(|rel| backlinks::slug_from_wiki_path(rel))
+                    .unwrap_or_default();
+                let unlinked_mentions_sec =
+                    unlinked_mentions_json(&self.wiki_root, &args.content, &self_slug_sec);
+
                 let mut response = serde_json::json!({
                     "status": "ok",
                     "path": args.path,
                     "mode": args.mode,
                     "section": section_name,
                     "section_found": write_result.section_found,
+                    "unlinked_mentions": unlinked_mentions_sec,
                 });
 
                 match Page::parse(&assembled) {
@@ -987,11 +1039,17 @@ impl WikiMcpServer {
                     McpCommitResult::Ok { dirty_warning } => dirty_warning,
                 };
 
+                // Scan the freshly-created page body for unlinked mentions
+                // (issue #103). Empty templates may yield []; that's fine.
+                let unlinked_mentions_new =
+                    unlinked_mentions_json(&self.wiki_root, &content, &args.slug);
+
                 let mut response = serde_json::json!({
                     "path": json_path,
                     "category": args.category,
                     "slug": args.slug,
                     "content": content,
+                    "unlinked_mentions": unlinked_mentions_new,
                 });
                 attach_warnings(&mut response, dirty_warning);
                 response.to_string()
@@ -2538,12 +2596,18 @@ mod tests {
 
         // Verify entry shape.
         for m in mentions {
-            assert!(m.get("term").is_some(), "mention must have 'term'; got: {m}");
+            assert!(
+                m.get("term").is_some(),
+                "mention must have 'term'; got: {m}"
+            );
             assert!(
                 m.get("target_slug").is_some(),
                 "mention must have 'target_slug'; got: {m}"
             );
-            assert!(m.get("line").is_some(), "mention must have 'line'; got: {m}");
+            assert!(
+                m.get("line").is_some(),
+                "mention must have 'line'; got: {m}"
+            );
             assert!(
                 m.get("context").is_some(),
                 "mention must have 'context'; got: {m}"

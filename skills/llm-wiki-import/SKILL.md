@@ -36,6 +36,47 @@ If `SCOPE.md` exists, judge whether the new content fits the documented Purpose 
 
 After ingestion, print a one-line confirmation: file path written, category, freshness (raw vs full page).
 
+## Inspecting `unlinked_mentions` after a write
+
+Every successful `wiki_write` and `wiki_new` response includes an
+`unlinked_mentions` field — always present, empty array when none:
+
+```json
+{
+  "status": "ok",
+  "path": "tools/my-page.md",
+  "unlinked_mentions": [
+    {
+      "term": "Flash Attention",
+      "target_slug": "flash-attention",
+      "line": 4,
+      "context": "Flash Attention is the main technique here."
+    }
+  ]
+}
+```
+
+**Scope rules:**
+
+- `overwrite` mode: mentions are scanned across the **entire** written page body.
+- `append_section` / `upsert_section` modes: only the **section content** you
+  wrote is scanned. Sibling sections are intentionally excluded — the agent only
+  edited one section, and the rest may already be fully linked.
+
+**When to follow up:**
+
+After a write, check `unlinked_mentions`. For each entry, decide whether to wrap
+the term in a `[[wikilink]]`:
+
+- If the term refers to a closely related concept the reader would benefit from
+  following, add a link by calling `wiki_write` in `upsert_section` mode on the
+  affected section (or `overwrite` if you want to update the full page).
+- If the mention is incidental (e.g., a generic word that happens to match a
+  page title) or the term appears many times and the first occurrence is already
+  linked, you can skip it.
+- Never blindly link every suggestion — link to aid navigation, not for
+  completeness.
+
 ## Hard rules
 
 - Never silent-fail. If you cannot complete the import, tell the user why.
