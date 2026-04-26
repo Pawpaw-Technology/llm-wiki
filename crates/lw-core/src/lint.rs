@@ -1,6 +1,9 @@
+use crate::aliases::{AliasIndex, build_index};
+use crate::backlinks::slug_from_wiki_path;
 use crate::fs::{category_from_path, list_pages, load_schema, read_page};
 use crate::git::{FreshnessLevel, compute_freshness, page_age_days};
 use crate::link::{extract_wiki_links, resolve_link};
+use crate::mentions::find_unlinked_mentions;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -247,6 +250,11 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
             })
             .collect();
 
+    // Check 7: Unlinked mentions — issue #102.
+    // Build the alias index once (in-memory; no sentinel required here since
+    // lint is a read-only pass and the index is ephemeral).
+    let unlinked_mentions = run_unlinked_mentions(root, category, &page_paths, &wiki_dir);
+
     Ok(LintReport {
         todo_pages,
         broken_related,
@@ -259,8 +267,80 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
             stale_pages,
         },
         stale_journal_pages,
-        // Stub: unlinked-mentions rule is not yet implemented.
-        // Issue #102 implementation fills this in the GREEN step.
-        unlinked_mentions: vec![],
+        unlinked_mentions,
     })
+}
+
+/// Build the alias index and scan every page in `page_paths` for unlinked
+/// mentions. Returns one `UnlinkedMentionFinding` per `(page, term, target)`
+/// triple — ambiguous matches produce multiple findings, one per matched page.
+///
+/// Pages in `_journal/` are excluded: journal entries are intentionally
+/// capture-not-linked (issue #39). The `category` filter is honoured the same
+/// way the other checks honour it.
+fn run_unlinked_mentions(
+    root: &Path,
+    category: Option<&str>,
+    page_paths: &[std::path::PathBuf],
+    wiki_dir: &Path,
+) -> Vec<UnlinkedMentionFinding> {
+    // Build an in-memory alias index from the vault. Errors (e.g. an
+    // unreadable vault) are silently ignored — lint degrades gracefully
+    // rather than aborting the entire report.
+    let index: AliasIndex = match build_index(root) {
+        Ok(idx) => idx,
+        Err(_) => return Vec::new(),
+    };
+
+    if index.terms.is_empty() {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for rel_path in page_paths {
+        // Apply the same category filter as other checks.
+        let cat = category_from_path(rel_path).unwrap_or_default();
+        if let Some(filter) = category
+            && cat != filter
+        {
+            continue;
+        }
+
+        let rel_str = rel_path.to_string_lossy();
+
+        // Exclude journal pages — they are intentionally un-linked captures.
+        if rel_str.starts_with("_journal/") || rel_str.starts_with("_journal\\") {
+            continue;
+        }
+        // Exclude special files.
+        if matches!(rel_str.as_ref(), "index.md" | "log.md") {
+            continue;
+        }
+
+        let abs_path = wiki_dir.join(rel_path);
+        let page = match read_page(&abs_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        // The slug for this page (used to suppress self-mentions).
+        let self_slug = slug_from_wiki_path(rel_path).unwrap_or_default();
+
+        // The path stored in findings uses `wiki/<rel>` form so it matches
+        // what the CLI displays (e.g. `wiki/tools/comrak.md`).
+        let finding_path = format!("wiki/{}", rel_str.replace('\\', "/"));
+
+        for mention in find_unlinked_mentions(&page.body, &index, &self_slug) {
+            findings.push(UnlinkedMentionFinding {
+                rule: "unlinked-mentions".to_string(),
+                path: finding_path.clone(),
+                line: mention.line,
+                term: mention.term,
+                target: mention.target_slug,
+            });
+        }
+    }
+
+    findings
 }

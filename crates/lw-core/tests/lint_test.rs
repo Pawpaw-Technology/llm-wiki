@@ -1,7 +1,7 @@
 mod common;
 
-use common::{make_page, TestWiki};
-use lw_core::lint::{run_lint, UnlinkedMentionFinding};
+use common::{TestWiki, make_page};
+use lw_core::lint::{UnlinkedMentionFinding, run_lint};
 
 #[test]
 fn lint_empty_wiki_returns_clean_report() {

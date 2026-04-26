@@ -186,7 +186,7 @@ fn lint_rule_filter_unlinked_mentions_json() {
     );
     // Other rule sections must be empty (rule filter suppresses them).
     assert!(
-        json["todo_pages"].as_array().map_or(true, |a| a.is_empty()),
+        json["todo_pages"].as_array().is_none_or(|a| a.is_empty()),
         "todo_pages must be empty when filtering to unlinked-mentions"
     );
 }
