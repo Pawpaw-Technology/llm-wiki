@@ -27,6 +27,7 @@ fn page_with(
         generator: generator.map(|s| s.to_string()),
         related: None,
         status: status.map(|s| s.to_string()),
+        aliases: vec![],
         body: body.to_string(),
     }
 }

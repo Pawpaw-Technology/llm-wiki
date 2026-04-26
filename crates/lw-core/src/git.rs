@@ -1281,6 +1281,42 @@ mod tests {
     }
 
     #[test]
+    fn dirty_warning_ignores_lw_aliases_built_sentinel() {
+        // `.lw/aliases/.built` is the sentinel for the alias index (#100).
+        // It must be silently ignored in the dirty-warning, mirroring the
+        // backlinks treatment.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+
+        fs::write(root.join("README.md"), "x").unwrap();
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+
+        // Simulate the aliases built sentinel.
+        fs::create_dir_all(root.join(".lw/aliases")).unwrap();
+        fs::write(root.join(".lw/aliases/.built"), "").unwrap();
+
+        // Wiki page being committed.
+        fs::create_dir_all(root.join("wiki/tools")).unwrap();
+        fs::write(root.join("wiki/tools/quux.md"), "page").unwrap();
+
+        let warning = dirty_elsewhere_warning(root, &[PathBuf::from("wiki/tools/quux.md")]);
+        assert!(
+            warning.is_none(),
+            ".lw/aliases/.built must not trigger dirty-warning; got: {warning:?}"
+        );
+    }
+
+    #[test]
     fn dirty_warning_fires_for_non_lw_dirty_file_positive_control() {
         // Positive control: even when .lw/ ephemeral paths are present, an
         // unrelated dirty file outside .lw/ must STILL trigger the warning.

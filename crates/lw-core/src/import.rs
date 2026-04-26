@@ -75,6 +75,7 @@ pub fn parse_twitter_json(json_str: &str, limit: Option<usize>) -> Result<Vec<Im
             generator: Some("lw-import".to_string()),
             related: None,
             status: None,
+            aliases: vec![],
             body: body.clone(),
         };
 
