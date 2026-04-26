@@ -54,6 +54,13 @@ pub struct AliasIndex {
 }
 
 impl AliasIndex {
+    /// Build an in-memory index by walking `wiki_root/wiki/`. Equivalent to
+    /// the free `build_index` function — provided as an associated function
+    /// so callers can use `AliasIndex::build(...)` per the issue #100 spec.
+    pub fn build(wiki_root: &Path) -> Result<Self> {
+        build_index(wiki_root)
+    }
+
     /// Look up pages that match the given term. The argument is normalized
     /// internally so callers can pass raw text without preprocessing.
     pub fn lookup(&self, term: &str) -> &[PageRef] {
