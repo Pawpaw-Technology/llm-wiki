@@ -178,20 +178,15 @@ Switching workspaces requires restarting the agent tool — MCP processes bind t
 - Release workflow: cross-compile for 4 targets on tag push
 - Docker: multi-stage build, non-root runtime
 
-## Release ritual
+## Release host smoke
 
-1. Bump `[workspace.package] version` in root `Cargo.toml`
-2. `cargo build -p lw-cli` — refresh `Cargo.lock`; verify `./target/debug/lw --version`
-3. `cargo test` — must be fully green before tagging
-4. `git commit -m "chore(release): bump version to X.Y.Z"` + `git push origin main` (admin override on branch protection; direct push is the established pattern for releases)
-5. `git tag -a vX.Y.Z -m "..."` + `git push origin vX.Y.Z` → triggers `.github/workflows/release.yml`
-6. `gh run watch <id>` until green; confirm GitHub Release lists 12 assets (4 tarballs + 4 sha256 + install.sh/uninstall.sh + 2 sha256)
-7. **Host smoke — don't skip.** Run the new binary through scenarios unit tests can't exercise:
-   - `lw upgrade` from the previous release; verify binary version bump
-   - `lw integrate <tool>` against an MCP entry written by an older lw (regression for the 0.2.0–0.2.3 cross-release Conflict bug)
-   - `lw query "..."` **while `lw serve` is running** against the same vault (regression for the 0.2.4 LockBusy bug)
-   - `lw doctor` — all integrations should report OK
-   - **Isolation is non-negotiable.** Any smoke that exercises `lw new` / `lw write` / `lw ingest` / `lw sync` MUST scope to a throwaway directory via `--root /tmp/lw-smoke-XXXX` (or `LW_WIKI_ROOT=/tmp/lw-smoke-XXXX`). Workspace resolution is `--root > LW_WIKI_ROOT > registered workspace > cwd auto-discover`, so without explicit scoping the binary resolves to the **registered workspace** (`~/.llm-wiki/config.toml`) — silently writing test pages and auto-committing into the maintainer's real wiki. `cd /tmp/foo && lw new ...` is NOT enough; the registry beats cwd. (Polluted `llm-wiki-data` once on 2026-04-25 with `9816b42 docs(wiki): create wiki/tools/foo.md`; reset locally before push, but use the rule.)
+After CI cuts a tag, run the new binary through scenarios unit tests can't exercise:
+
+- `lw upgrade` from the previous release; verify binary version bump
+- `lw integrate <tool>` against an MCP entry written by an older lw (regression for the 0.2.0–0.2.3 cross-release Conflict bug)
+- `lw query "..."` **while `lw serve` is running** against the same vault (regression for the 0.2.4 LockBusy bug)
+- `lw doctor` — all integrations should report OK
+- **Isolation is non-negotiable.** Any smoke that exercises `lw new` / `lw write` / `lw ingest` / `lw sync` MUST scope to a throwaway directory via `--root /tmp/lw-smoke-XXXX` (or `LW_WIKI_ROOT=/tmp/lw-smoke-XXXX`). Workspace resolution is `--root > LW_WIKI_ROOT > registered workspace > cwd auto-discover`, so without explicit scoping the binary resolves to the **registered workspace** (`~/.llm-wiki/config.toml`) — silently writing test pages and auto-committing into the maintainer's real wiki. `cd /tmp/foo && lw new ...` is NOT enough; the registry beats cwd. (Polluted `llm-wiki-data` once on 2026-04-25 with `9816b42 docs(wiki): create wiki/tools/foo.md`; reset locally before push, but use the rule.)
 
 ## Observability
 
