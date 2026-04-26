@@ -1,5 +1,6 @@
 pub mod aliases;
 pub mod backlinks;
+pub mod mentions;
 pub mod error;
 pub mod fs;
 pub mod git;
