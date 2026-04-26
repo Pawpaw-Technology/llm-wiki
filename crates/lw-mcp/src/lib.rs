@@ -667,7 +667,7 @@ impl WikiMcpServer {
                 let self_slug = abs_path
                     .strip_prefix(self.wiki_root.join("wiki"))
                     .ok()
-                    .and_then(|rel| backlinks::slug_from_wiki_path(rel))
+                    .and_then(backlinks::slug_from_wiki_path)
                     .unwrap_or_default();
                 let unlinked_mentions =
                     unlinked_mentions_json(&self.wiki_root, &args.content, &self_slug);
@@ -781,7 +781,7 @@ impl WikiMcpServer {
                 let self_slug_sec = abs_path
                     .strip_prefix(self.wiki_root.join("wiki"))
                     .ok()
-                    .and_then(|rel| backlinks::slug_from_wiki_path(rel))
+                    .and_then(backlinks::slug_from_wiki_path)
                     .unwrap_or_default();
                 let unlinked_mentions_sec =
                     unlinked_mentions_json(&self.wiki_root, &args.content, &self_slug_sec);
@@ -2619,7 +2619,7 @@ mod tests {
             .map(|m| m["term"].as_str().unwrap())
             .collect();
         assert!(
-            terms.iter().any(|t| *t == "Transformer Architecture"),
+            terms.contains(&"Transformer Architecture"),
             "expected 'Transformer Architecture' in mention terms; got: {terms:?}"
         );
     }
@@ -2778,7 +2778,7 @@ Placeholder.
             .map(|m| m["term"].as_str().unwrap())
             .collect();
         assert!(
-            terms.iter().any(|t| *t == "Flash Attention"),
+            terms.contains(&"Flash Attention"),
             "expected 'Flash Attention' in mention terms; got: {terms:?}"
         );
     }
