@@ -2482,4 +2482,262 @@ mod tests {
         assert_eq!(hits[1]["title"], "B");
         assert_eq!(hits[2]["title"], "C");
     }
+
+    // ─── unlinked_mentions in wiki_write / wiki_new (#103) ───────────────────
+
+    /// Helper: write a page at `rel_path` within the `wiki/` directory.
+    fn seed_page(root: &std::path::Path, rel_path: &str, content: &str) {
+        let wiki_dir = root.join("wiki");
+        let abs = wiki_dir.join(rel_path);
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&abs, content).unwrap();
+    }
+
+    /// AC-1: `wiki_write` overwrite response includes `unlinked_mentions` with
+    /// populated entries when the content has terms matching indexed pages.
+    #[test]
+    fn wiki_write_overwrite_includes_unlinked_mentions_when_present() {
+        let (tmp, server) = spawn_server();
+
+        // Create an indexed target page.
+        seed_page(
+            tmp.path(),
+            "architecture/transformer-architecture.md",
+            "---\ntitle: Transformer Architecture\ntags: []\n---\n\nThe transformer model.\n",
+        );
+        lw_core::aliases::rebuild_index(tmp.path()).unwrap();
+
+        let args = WikiWriteArgs {
+            path: "tools/my-page.md".to_string(),
+            mode: "overwrite".to_string(),
+            content:
+                "---\ntitle: My Page\ntags: []\n---\n\nThis page is about Transformer Architecture in ML.\n"
+                    .to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+
+        // Field must always be present.
+        assert!(
+            v.get("unlinked_mentions").is_some(),
+            "unlinked_mentions must always be present in overwrite response; got: {resp}"
+        );
+
+        let mentions = v["unlinked_mentions"].as_array().unwrap();
+        assert!(
+            !mentions.is_empty(),
+            "expected ≥1 unlinked mention for 'Transformer Architecture'; got empty array"
+        );
+
+        // Verify entry shape.
+        for m in mentions {
+            assert!(m.get("term").is_some(), "mention must have 'term'; got: {m}");
+            assert!(
+                m.get("target_slug").is_some(),
+                "mention must have 'target_slug'; got: {m}"
+            );
+            assert!(m.get("line").is_some(), "mention must have 'line'; got: {m}");
+            assert!(
+                m.get("context").is_some(),
+                "mention must have 'context'; got: {m}"
+            );
+        }
+
+        let terms: Vec<&str> = mentions
+            .iter()
+            .map(|m| m["term"].as_str().unwrap())
+            .collect();
+        assert!(
+            terms.iter().any(|t| *t == "Transformer Architecture"),
+            "expected 'Transformer Architecture' in mention terms; got: {terms:?}"
+        );
+    }
+
+    /// AC-4: A fully-linked page returns `unlinked_mentions: []` — always
+    /// present but empty when all mentions are already wrapped in wikilinks.
+    #[test]
+    fn wiki_write_overwrite_returns_empty_when_fully_linked() {
+        let (tmp, server) = spawn_server();
+
+        seed_page(
+            tmp.path(),
+            "architecture/transformer-architecture.md",
+            "---\ntitle: Transformer Architecture\ntags: []\n---\n\nThe transformer model.\n",
+        );
+        lw_core::aliases::rebuild_index(tmp.path()).unwrap();
+
+        let args = WikiWriteArgs {
+            path: "tools/linked-page.md".to_string(),
+            mode: "overwrite".to_string(),
+            // The mention is wrapped in [[…]] — matcher must suppress it.
+            content:
+                "---\ntitle: Linked Page\ntags: []\n---\n\nThis page is about [[Transformer Architecture]] in ML.\n"
+                    .to_string(),
+            section: None,
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+
+        assert!(
+            v.get("unlinked_mentions").is_some(),
+            "unlinked_mentions must always be present (even when empty); got: {resp}"
+        );
+        let mentions = v["unlinked_mentions"].as_array().unwrap();
+        assert!(
+            mentions.is_empty(),
+            "fully-linked page must return [] for unlinked_mentions; got: {mentions:?}"
+        );
+    }
+
+    /// AC-2: upsert_section scans ONLY the written section content.
+    /// A fully-linked sibling section must NOT contribute unlinked mentions.
+    #[test]
+    fn wiki_write_upsert_section_does_not_scan_sibling_section() {
+        let (tmp, server) = spawn_server();
+
+        seed_page(
+            tmp.path(),
+            "architecture/flash-attention.md",
+            "---\ntitle: Flash Attention\ntags: []\n---\n\nFast attention algorithm.\n",
+        );
+        lw_core::aliases::rebuild_index(tmp.path()).unwrap();
+
+        // Base page: Overview section mentions "Flash Attention" WITH a wikilink;
+        // References section has no unlinked mentions.
+        seed_page(
+            tmp.path(),
+            "tools/attention-guide.md",
+            "\
+---
+title: Attention Guide
+tags: []
+---
+
+## Overview
+See [[Flash Attention]] for details.
+
+## References
+Plain text with no mentions of anything.
+",
+        );
+
+        // Upsert the "References" section — content has no unlinked mentions.
+        let args = WikiWriteArgs {
+            path: "tools/attention-guide.md".to_string(),
+            mode: "upsert_section".to_string(),
+            section: Some("References".to_string()),
+            // Written section content: no unlinked "Flash Attention" here.
+            content: "- Primary reference: see documentation.".to_string(),
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+
+        assert!(
+            v.get("unlinked_mentions").is_some(),
+            "unlinked_mentions must always be present in upsert_section response; got: {resp}"
+        );
+        let mentions = v["unlinked_mentions"].as_array().unwrap();
+        // The fully-linked "Overview" sibling must NOT contribute.
+        assert!(
+            mentions.is_empty(),
+            "upsert_section must only scan the written section, not sibling sections; \
+             got mentions: {mentions:?}"
+        );
+    }
+
+    /// AC-2 positive: upsert_section DOES surface unlinked mentions within the
+    /// section being written.
+    #[test]
+    fn wiki_write_upsert_section_surfaces_mentions_in_written_content() {
+        let (tmp, server) = spawn_server();
+
+        seed_page(
+            tmp.path(),
+            "architecture/flash-attention.md",
+            "---\ntitle: Flash Attention\ntags: []\n---\n\nFast attention algorithm.\n",
+        );
+        lw_core::aliases::rebuild_index(tmp.path()).unwrap();
+
+        seed_page(
+            tmp.path(),
+            "tools/attention-guide.md",
+            "\
+---
+title: Attention Guide
+tags: []
+---
+
+## Overview
+See [[Flash Attention]] for details.
+
+## References
+Placeholder.
+",
+        );
+
+        // Upsert "References" with content that mentions "Flash Attention" unlinked.
+        let args = WikiWriteArgs {
+            path: "tools/attention-guide.md".to_string(),
+            mode: "upsert_section".to_string(),
+            section: Some("References".to_string()),
+            content: "Flash Attention is the main technique here.".to_string(),
+            commit: Some(false),
+            push: None,
+            author: None,
+            source: None,
+        };
+        let resp = server.wiki_write(Parameters(args));
+        let v = parse(&resp);
+
+        let mentions = v["unlinked_mentions"].as_array().unwrap();
+        assert!(
+            !mentions.is_empty(),
+            "upsert_section must surface unlinked mentions in the written section; got: {resp}"
+        );
+        let terms: Vec<&str> = mentions
+            .iter()
+            .map(|m| m["term"].as_str().unwrap())
+            .collect();
+        assert!(
+            terms.iter().any(|t| *t == "Flash Attention"),
+            "expected 'Flash Attention' in mention terms; got: {terms:?}"
+        );
+    }
+
+    /// AC-3: `wiki_new` response always includes `unlinked_mentions`.
+    /// On a fresh vault with no indexed pages the field is `[]`.
+    #[test]
+    fn wiki_new_includes_unlinked_mentions_field() {
+        let (_tmp, server) = spawn_server();
+
+        let args = new_args("tools", "my-new-tool", "My New Tool", vec![], None);
+        let resp = server.wiki_new(Parameters(args));
+        let v = parse(&resp);
+
+        assert!(
+            v.get("unlinked_mentions").is_some(),
+            "unlinked_mentions must always be present in wiki_new response; got: {resp}"
+        );
+        let mentions = v["unlinked_mentions"].as_array().unwrap();
+        assert!(
+            mentions.is_empty(),
+            "wiki_new on a fresh vault with no indexed pages must return [] for unlinked_mentions; \
+             got: {mentions:?}"
+        );
+    }
 }
