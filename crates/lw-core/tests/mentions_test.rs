@@ -5,9 +5,9 @@
 
 mod common;
 
-use common::{make_page, TestWiki};
-use lw_core::aliases::{build_index, AliasIndex};
-use lw_core::mentions::{find_unlinked_mentions, UnlinkedMention, MAX_WINDOW_TOKENS};
+use common::{TestWiki, make_page};
+use lw_core::aliases::{AliasIndex, build_index};
+use lw_core::mentions::{MAX_WINDOW_TOKENS, UnlinkedMention, find_unlinked_mentions};
 
 // ─── Tiny helpers (reduce per-test boilerplate) ─────────────────────────────
 

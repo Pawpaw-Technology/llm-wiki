@@ -133,13 +133,21 @@ fn strip_frontmatter(body: &str) -> (&str, u32) {
     let mut found_close = false;
 
     for (i, line) in body.lines().enumerate() {
-        // `lines()` strips line terminators; reconstruct the byte length by
-        // adding 1 (\n) when this is not the last line.
+        // `lines()` strips the line terminator entirely. Detect whether the
+        // original byte sequence uses CRLF (\r\n = 2 bytes) or LF (\n = 1
+        // byte) so `consumed_bytes` stays aligned with `body`.
         let line_bytes = line.len();
         consumed_bytes += line_bytes;
-        // Only add the newline byte if there's more text after this line.
+        // Peek at the next byte after the line content: if it is '\r' the
+        // terminator is \r\n (2 bytes), otherwise just \n (1 byte). Only add
+        // the terminator when there is more content after this line.
         if consumed_bytes < body.len() {
-            consumed_bytes += 1;
+            let next_byte = body.as_bytes()[consumed_bytes];
+            if next_byte == b'\r' {
+                consumed_bytes += 2; // \r\n
+            } else {
+                consumed_bytes += 1; // \n
+            }
         }
         consumed_lines += 1;
 
@@ -244,12 +252,21 @@ fn scan_line(
                 continue;
             }
 
-            // Self-reference guard: if any matched page is the current
-            // page, drop the *whole* mention (per issue spec — a page does
-            // not flag mentions of itself, full stop). If multiple pages
-            // resolve and only one is self, we still drop, because the
-            // intent is "don't surface self-noise".
-            if !self_slug.is_empty() && pages.iter().any(|p| p.slug == self_slug) {
+            // Self-reference guard: filter out any PageRef whose slug is
+            // the current page (spec criterion #6). If the term resolves
+            // ambiguously to [self, page_b], we keep page_b and emit one
+            // mention for it (spec criterion #7 — consumer decides how to
+            // surface ambiguous matches). Only when ALL resolved pages are
+            // self do we suppress entirely and advance past the window.
+            let non_self_pages: Vec<_> = if self_slug.is_empty() {
+                pages.iter().collect()
+            } else {
+                pages.iter().filter(|p| p.slug != self_slug).collect()
+            };
+
+            if non_self_pages.is_empty() {
+                // Every resolution was self — consume the window without
+                // emitting, same as the original single-self behaviour.
                 matched_end_token = Some(end);
                 break;
             }
@@ -259,7 +276,7 @@ fn scan_line(
             let verbatim_term = line[start_byte..end_byte].to_string();
             let context = snippet_centered(line, start_byte, end_byte);
 
-            for page in pages {
+            for page in non_self_pages {
                 out.push(UnlinkedMention {
                     term: verbatim_term.clone(),
                     target_slug: page.slug.clone(),
