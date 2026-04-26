@@ -105,10 +105,14 @@ pub fn build_index(wiki_root: &Path) -> Result<AliasIndex> {
 }
 
 /// Rebuild the full index from scratch and persist it to
-/// `.lw/aliases/index.json`. Writes the `.built` sentinel on success.
+/// `.lw/aliases/index.json`. Writes the `.built` sentinel on success — only
+/// `rebuild_index` writes the sentinel; incremental updates do not, so a
+/// partial `update_for_page` against a fresh vault cannot fool a later
+/// `ensure_index` into short-circuiting.
 pub fn rebuild_index(wiki_root: &Path) -> Result<()> {
     let index = build_index(wiki_root)?;
     save_index(wiki_root, &index)?;
+    write_built_sentinel(wiki_root)?;
     Ok(())
 }
 
@@ -140,13 +144,16 @@ pub fn ensure_index(wiki_root: &Path) -> Result<()> {
 /// dirty-warnings and it must not be committed.
 pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<Vec<PathBuf>> {
     let mut index = load_index(wiki_root)?.unwrap_or_default();
-    let source_slug = slug_from_wiki_path(source_rel).unwrap_or_default();
+    // Identity in the index is the full `wiki/<cat>/<file>.md` path, NOT the
+    // filename slug — `lw new` permits two pages with the same filename in
+    // different categories. Stripping by slug would wipe sibling entries.
+    let source_path = wiki_path(source_rel);
 
     // Strip stale entries for this page. Done unconditionally so a rename
     // or alias-drop in the new version cleanly leaves the old terms behind.
-    if !source_slug.is_empty() {
+    if !source_path.is_empty() {
         for entries in index.terms.values_mut() {
-            entries.retain(|p| p.slug != source_slug);
+            entries.retain(|p| p.path != source_path);
         }
         index.terms.retain(|_, v| !v.is_empty());
     }
@@ -162,21 +169,30 @@ pub fn update_for_page(wiki_root: &Path, source_rel: &Path) -> Result<Vec<PathBu
         }
     }
 
+    // Note: do NOT write `.built` here. Incremental updates may run before
+    // any full build (e.g. on a fresh vault that just had its first page
+    // edited via MCP), and a sentinel from a partial save would cause a
+    // later `ensure_index` to skip the rebuild and miss every other page.
     let written = save_index(wiki_root, &index)?;
     Ok(vec![written])
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
+/// Convert a wiki-relative path (e.g. `tools/foo.md`) to its canonical
+/// `wiki/...` form used throughout the index for page identity.
+fn wiki_path(rel_path: &Path) -> String {
+    format!("wiki/{}", rel_path.to_string_lossy().replace('\\', "/"))
+}
+
 /// Compute the `PageRef` and the deduped, normalized term list for a single
 /// page given its path relative to `wiki/`.
 fn page_terms(rel_path: &Path, page: &Page) -> (PageRef, Vec<String>) {
     let slug = slug_from_wiki_path(rel_path).unwrap_or_default();
-    let path = format!("wiki/{}", rel_path.to_string_lossy().replace('\\', "/"));
     let page_ref = PageRef {
         slug: slug.clone(),
         title: page.title.clone(),
-        path,
+        path: wiki_path(rel_path),
     };
 
     let mut terms = Vec::new();
@@ -198,8 +214,11 @@ fn page_terms(rel_path: &Path, page: &Page) -> (PageRef, Vec<String>) {
     (page_ref, terms)
 }
 
-/// Persist the index to `.lw/aliases/index.json` and write the `.built`
-/// sentinel. Returns the index file path so callers (auto-commit) can pin it.
+/// Persist the index to `.lw/aliases/index.json`. Does NOT write the
+/// `.built` sentinel — that is `rebuild_index`'s exclusive responsibility,
+/// so an incremental `update_for_page` against a fresh vault does not
+/// produce a partial-but-marked-built index. Returns the index file path so
+/// callers (auto-commit) can pin it.
 fn save_index(wiki_root: &Path, index: &AliasIndex) -> Result<PathBuf> {
     let dir = wiki_root.join(ALIASES_DIR);
     std::fs::create_dir_all(&dir)
@@ -208,12 +227,19 @@ fn save_index(wiki_root: &Path, index: &AliasIndex) -> Result<PathBuf> {
         .map_err(|e| crate::WikiError::Io(std::io::Error::other(e.to_string())))?;
     let index_path = dir.join(INDEX_FILE);
     atomic_write(&index_path, &json)?;
-
-    // Sentinel is written AFTER the index file so a partial save cannot
-    // falsely advertise itself as built. Empty body — only existence matters.
-    let sentinel = dir.join(BUILT_SENTINEL);
-    atomic_write(&sentinel, b"")?;
     Ok(index_path)
+}
+
+/// Write the `.built` sentinel inside `ALIASES_DIR`. Called only by
+/// `rebuild_index` after a successful full save — its existence signals
+/// "the index reflects every page in the vault, ensure_index can
+/// short-circuit". Body is intentionally empty; existence is the signal.
+fn write_built_sentinel(wiki_root: &Path) -> Result<()> {
+    let dir = wiki_root.join(ALIASES_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| crate::WikiError::Io(std::io::Error::other(e.to_string())))?;
+    atomic_write(&dir.join(BUILT_SENTINEL), b"")?;
+    Ok(())
 }
 
 /// Load the persisted index, returning `None` when the file is absent.

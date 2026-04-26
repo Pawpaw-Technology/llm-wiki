@@ -6,10 +6,10 @@
 
 mod common;
 
-use common::{make_page, TestWiki};
+use common::{TestWiki, make_page};
 use lw_core::aliases::{
-    build_index, ensure_index, normalize, rebuild_index, update_for_page, AliasIndex, PageRef,
-    ALIASES_DIR,
+    ALIASES_DIR, AliasIndex, PageRef, build_index, ensure_index, normalize, rebuild_index,
+    update_for_page,
 };
 use std::path::Path;
 
