@@ -1,6 +1,5 @@
 pub mod aliases;
 pub mod backlinks;
-pub mod mentions;
 pub mod error;
 pub mod fs;
 pub mod git;
@@ -9,6 +8,7 @@ pub mod ingest;
 pub mod journal;
 pub mod link;
 pub mod lint;
+pub mod mentions;
 pub mod page;
 pub mod schema;
 pub mod search;
