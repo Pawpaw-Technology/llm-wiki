@@ -6,10 +6,10 @@
 
 mod common;
 
-use common::{TestWiki, make_page};
+use common::{make_page, TestWiki};
 use lw_core::aliases::{
-    ALIASES_DIR, AliasIndex, PageRef, build_index, ensure_index, normalize, rebuild_index,
-    update_for_page,
+    build_index, ensure_index, normalize, rebuild_index, update_for_page, AliasIndex, PageRef,
+    ALIASES_DIR,
 };
 use std::path::Path;
 
@@ -489,6 +489,109 @@ fn update_for_page_returns_index_path_when_changed() {
     assert!(
         written.iter().any(|p| p == &expected),
         "returned paths must include {expected:?}; got {written:?}"
+    );
+}
+
+// ─── Regressions: PR #113 review ─────────────────────────────────────────────
+
+/// Regression for PR #113 review item 1: `update_for_page` must not write the
+/// `.built` sentinel — a partial incremental update is not a substitute for
+/// a full rebuild. If the sentinel were written by an incremental update on
+/// a fresh vault, a later `ensure_index` would short-circuit and leave every
+/// untouched page absent from alias lookups.
+///
+/// Detection: in a vault with two pages, call `update_for_page` on one
+/// (skipping `ensure_index`) and then call `ensure_index`. If the sentinel
+/// was incorrectly written, `ensure_index` short-circuits and the untouched
+/// page never makes it into the index.
+#[test]
+fn update_for_page_does_not_mark_index_as_fully_built() {
+    let wiki = TestWiki::new();
+    let touched = make_page("Touched", &["tools"], "normal", "body");
+    wiki.write_page("tools/touched.md", &touched);
+    let untouched = make_page("Untouched", &["tools"], "normal", "body");
+    wiki.write_page("tools/untouched.md", &untouched);
+
+    // Incremental update on the first page only — no ensure_index beforehand.
+    update_for_page(wiki.root(), Path::new("tools/touched.md")).expect("update");
+
+    // The next ensure_index MUST do a full rebuild (since we never built the
+    // index from scratch). If the incremental update wrote `.built`, this
+    // call short-circuits and leaves the untouched page out forever.
+    ensure_index(wiki.root()).expect("ensure");
+
+    let raw = std::fs::read_to_string(wiki.root().join(ALIASES_DIR).join("index.json")).unwrap();
+    let persisted: AliasIndex = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        persisted.lookup("untouched").len(),
+        1,
+        "ensure_index after a partial incremental update must still rebuild \
+         the full vault — Untouched is missing: {:?}",
+        persisted.terms
+    );
+}
+
+/// Regression for PR #113 review item 2: page identity in the index is the
+/// full `wiki/<category>/<file>.md` path, not the filename slug. `lw new`
+/// allows two pages with the same filename in different categories (only the
+/// exact path is uniqueness-checked), so `update_for_page` must strip stale
+/// entries by path — otherwise editing one of two same-slug pages wipes the
+/// other from the index until a full rebuild.
+#[test]
+fn update_for_page_does_not_strip_same_slug_pages_in_other_categories() {
+    let wiki = TestWiki::new();
+    let tools_foo = make_page("Tools Foo", &["tools"], "normal", "body");
+    wiki.write_page("tools/foo.md", &tools_foo);
+    let arch_foo = make_page("Arch Foo", &["architecture"], "normal", "body");
+    wiki.write_page("architecture/foo.md", &arch_foo);
+
+    rebuild_index(wiki.root()).expect("rebuild");
+
+    // Sanity: term "foo" (the shared slug) resolves to BOTH pages before any
+    // incremental update runs.
+    let raw = std::fs::read_to_string(wiki.root().join(ALIASES_DIR).join("index.json")).unwrap();
+    let before: AliasIndex = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        before.lookup("foo").len(),
+        2,
+        "precondition: both same-slug pages indexed: {:?}",
+        before.terms
+    );
+
+    // Edit only tools/foo.md.
+    let tools_foo_v2 = make_page("Tools Foo v2", &["tools"], "normal", "body");
+    wiki.write_page("tools/foo.md", &tools_foo_v2);
+    update_for_page(wiki.root(), Path::new("tools/foo.md")).expect("update tools/foo");
+
+    let raw = std::fs::read_to_string(wiki.root().join(ALIASES_DIR).join("index.json")).unwrap();
+    let after: AliasIndex = serde_json::from_str(&raw).unwrap();
+
+    // The architecture page must still be in the index — its title and slug
+    // entries must survive an unrelated edit on a same-slug sibling.
+    let arch_paths: Vec<&str> = after
+        .lookup("foo")
+        .iter()
+        .filter(|p| p.path == "wiki/architecture/foo.md")
+        .map(|p| p.path.as_str())
+        .collect();
+    assert_eq!(
+        arch_paths.len(),
+        1,
+        "architecture/foo.md must survive an edit on tools/foo.md: {:?}",
+        after.terms
+    );
+    assert_eq!(
+        after.lookup("arch foo").len(),
+        1,
+        "architecture/foo.md's title term must still resolve: {:?}",
+        after.terms
+    );
+    // And the just-edited page is reflected with the new title.
+    assert_eq!(after.lookup("tools foo v2").len(), 1, "new title indexed");
+    assert!(
+        after.lookup("tools foo").is_empty(),
+        "old title dropped for the edited page: {:?}",
+        after.terms
     );
 }
 
