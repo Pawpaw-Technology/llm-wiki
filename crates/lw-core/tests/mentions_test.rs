@@ -5,9 +5,9 @@
 
 mod common;
 
-use common::{TestWiki, make_page};
-use lw_core::aliases::{AliasIndex, build_index};
-use lw_core::mentions::{MAX_WINDOW_TOKENS, UnlinkedMention, find_unlinked_mentions};
+use common::{make_page, TestWiki};
+use lw_core::aliases::{build_index, AliasIndex};
+use lw_core::mentions::{find_unlinked_mentions, UnlinkedMention, MAX_WINDOW_TOKENS};
 
 // ─── Tiny helpers (reduce per-test boilerplate) ─────────────────────────────
 
@@ -575,6 +575,108 @@ fn perf_under_100ms_on_500_page_wiki() {
     );
     // In debug mode just print the timing for human review.
     eprintln!("find_unlinked_mentions on 500-page wiki: {elapsed:?}");
+}
+
+// ─── PR #115 review regression: CRLF frontmatter ────────────────────────────
+
+/// Frontmatter delimited by `\r\n` line endings must be stripped correctly.
+/// The byte-counter inside `strip_frontmatter` must account for the extra `\r`
+/// byte that `body.lines()` discards, otherwise the split lands inside the
+/// `\r` byte of the closing `---\r\n` and line numbers are off by 1.
+#[test]
+fn frontmatter_with_crlf_line_endings_is_excluded_and_lines_after_it_count_correctly() {
+    let (_wiki, index) = index_with(&[(
+        "tools/tantivy.md",
+        make_page("Tantivy", &["tools"], "normal", "body"),
+    )]);
+
+    // Build a body whose frontmatter uses \r\n throughout.
+    // Line map (1-based within the raw string):
+    //   1: ---\r\n
+    //   2: title: x\r\n
+    //   3: ---\r\n
+    //   4: actual body line 1\r\n
+    //   5: [[tantivy]]\r\n   ← already linked, must NOT fire
+    //   6: tantivy\r\n        ← unlinked, MUST fire
+    let body = "---\r\ntitle: x\r\n---\r\nactual body line 1\r\n[[tantivy]]\r\ntantivy\r\n";
+    let hits = find_unlinked_mentions(body, &index, "");
+
+    // The "tantivy" inside the frontmatter key area must not fire.
+    // (None of the frontmatter lines contain the plain word "tantivy", but
+    // this assertion guards against the CRLF split going wrong and scanning
+    // frontmatter as body.)
+    assert!(
+        hits.iter().all(|h| h.line >= 4),
+        "no match may come from within the frontmatter (lines 1-3): {hits:?}"
+    );
+
+    // The already-linked [[tantivy]] on line 5 must not fire.
+    assert!(
+        !hits.iter().any(|h| h.line == 5),
+        "[[tantivy]] (already linked) must not fire: {hits:?}"
+    );
+
+    // The unlinked "tantivy" on line 6 of the raw body must fire exactly once.
+    let line6_hits: Vec<_> = hits.iter().filter(|h| h.line == 6).collect();
+    assert_eq!(
+        line6_hits.len(),
+        1,
+        "exactly one match expected on raw-input line 6 (unlinked tantivy): {hits:?}"
+    );
+    assert_eq!(line6_hits[0].target_slug, "tantivy");
+}
+
+// ─── PR #115 review regression: self-ref + ambiguous match interaction ───────
+
+/// When a term resolves ambiguously to BOTH self.md and other.md, the self
+/// entry must be filtered out and exactly one mention (for other.md) emitted.
+/// This tests spec criterion #7: the self-ref guard is a filter, not a drop.
+#[test]
+fn self_ref_drops_only_self_when_term_ambiguously_matches_other_pages() {
+    // Give both pages the same alias "foo" so the term is genuinely ambiguous.
+    let mut self_page = make_page("Self Page", &["arch"], "normal", "body");
+    self_page.aliases = vec!["foo".to_string()];
+    let mut other_page = make_page("Other Page", &["arch"], "normal", "body");
+    other_page.aliases = vec!["foo".to_string()];
+    let (_wiki, index) = index_with(&[
+        ("architecture/self.md", self_page),
+        ("architecture/other.md", other_page),
+    ]);
+
+    // Scan body that mentions "foo" with self_slug = "self".
+    let body = "foo is interesting.";
+    let hits = find_unlinked_mentions(body, &index, "self");
+
+    // Must produce exactly one mention — for "other", not "self".
+    assert_eq!(
+        hits.len(),
+        1,
+        "exactly one mention expected (self filtered, other kept): {hits:?}"
+    );
+    assert_eq!(
+        hits[0].target_slug, "other",
+        "surviving mention must point to the non-self page: {hits:?}"
+    );
+}
+
+/// When a term resolves ONLY to self.md, the self-ref guard must suppress all
+/// output (zero mentions). This is the original spec criterion #6 behaviour,
+/// preserved after the filter-not-drop refactor.
+#[test]
+fn self_ref_yields_no_mentions_when_term_only_matches_self() {
+    let (_wiki, index) = index_with(&[(
+        "tools/tantivy.md",
+        make_page("Tantivy", &["tools"], "normal", "body"),
+    )]);
+
+    // "tantivy" resolves only to itself — scanning its own body must yield nothing.
+    let body = "Tantivy is great.";
+    let hits = find_unlinked_mentions(body, &index, "tantivy");
+
+    assert!(
+        hits.is_empty(),
+        "self-only match must produce zero mentions: {hits:?}"
+    );
 }
 
 // ─── Compile-time API surface ───────────────────────────────────────────────
