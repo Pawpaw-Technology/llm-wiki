@@ -175,23 +175,35 @@ Switching workspaces requires restarting the agent tool — MCP processes bind t
 ## CI/CD
 
 - GitHub Actions: fmt, clippy, test (ubuntu + macos matrix)
-- Release workflow: cross-compile for 4 targets on tag push
+- Release workflow: cross-compile for 4 targets on tag push or `workflow_dispatch`
+- release-please: `release-please-action@v4` watches main and opens auto-generated Release PRs (config: `release-please-config.json`, manifest: `.release-please-manifest.json`)
 - Docker: multi-stage build, non-root runtime
 
 ## Release ritual
 
-1. Bump `[workspace.package] version` in root `Cargo.toml`
-2. `cargo build -p lw-cli` — refresh `Cargo.lock`; verify `./target/debug/lw --version`
-3. `cargo test` — must be fully green before tagging
-4. `git commit -m "chore(release): bump version to X.Y.Z"` + `git push origin main` (admin override on branch protection; direct push is the established pattern for releases)
-5. `git tag -a vX.Y.Z -m "..."` + `git push origin vX.Y.Z` → triggers `.github/workflows/release.yml`
-6. `gh run watch <id>` until green; confirm GitHub Release lists 12 assets (4 tarballs + 4 sha256 + install.sh/uninstall.sh + 2 sha256)
-7. **Host smoke — don't skip.** Run the new binary through scenarios unit tests can't exercise:
+Version bump, Cargo.toml, and CHANGELOG are automated by release-please. Conventional-commit messages drive the semver bump.
+
+1. Land conventional-commit PRs on main (`feat:` → minor bump, `fix:` → patch). release-please opens (or updates) a "Release PR" on every push to main if there are unreleased commits.
+2. Review the Release PR — check the proposed `Cargo.toml` (workspace.package version line annotated with `# x-release-please-version`), `CHANGELOG.md`, and `.release-please-manifest.json` bumps. Merge with `--admin` (branch protection on main; the bot's PR cannot self-approve).
+3. release-please creates the `vX.Y.Z` tag on its Release-PR merge. **`release.yml` will NOT auto-fire** — by GitHub Actions policy, tags pushed via the default `GITHUB_TOKEN` don't trigger downstream workflows. Trigger manually:
+   ```bash
+   gh workflow run release.yml -f tag=vX.Y.Z
+   gh run list --workflow=release.yml --limit 1   # grab the run id
+   gh run watch <id>                              # until green
+   ```
+4. Confirm the GitHub Release page lists 12 assets (4 tarballs + 4 sha256 + install.sh/uninstall.sh + 2 sha256).
+5. **Host smoke — don't skip.** Run the new binary through scenarios unit tests can't exercise:
    - `lw upgrade` from the previous release; verify binary version bump
    - `lw integrate <tool>` against an MCP entry written by an older lw (regression for the 0.2.0–0.2.3 cross-release Conflict bug)
    - `lw query "..."` **while `lw serve` is running** against the same vault (regression for the 0.2.4 LockBusy bug)
    - `lw doctor` — all integrations should report OK
    - **Isolation is non-negotiable.** Any smoke that exercises `lw new` / `lw write` / `lw ingest` / `lw sync` MUST scope to a throwaway directory via `--root /tmp/lw-smoke-XXXX` (or `LW_WIKI_ROOT=/tmp/lw-smoke-XXXX`). Workspace resolution is `--root > LW_WIKI_ROOT > registered workspace > cwd auto-discover`, so without explicit scoping the binary resolves to the **registered workspace** (`~/.llm-wiki/config.toml`) — silently writing test pages and auto-committing into the maintainer's real wiki. `cd /tmp/foo && lw new ...` is NOT enough; the registry beats cwd. (Polluted `llm-wiki-data` once on 2026-04-25 with `9816b42 docs(wiki): create wiki/tools/foo.md`; reset locally before push, but use the rule.)
+
+### Release-please caveats
+
+- **Cargo.lock is stale in the Release PR.** `release-type: simple` only updates files in `extra-files`; the workspace `version.workspace = true` inheritance pattern blocks `release-type: rust`. CI doesn't use `--locked` so the lockfile auto-updates on first build; no failure expected. For a clean PR, run `cargo update --workspace` on the release branch before merging.
+- **Strict commit-title parser.** Titles like `feat(scope): subject (closes #X) (#Y)` confuse the conventional-commit parser and get skipped from the changelog (the bump is still correct because enough other commits parse). Prefer `Closes #X` in the body, not the title.
+- **GITHUB_TOKEN limitation is the root cause** of step 3's manual trigger. Long-term fix is to give release-please-action a PAT or GitHub App token; the `workflow_dispatch` fallback in `release.yml` is acceptable for now.
 
 ## Observability
 
