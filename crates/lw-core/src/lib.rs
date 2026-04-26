@@ -8,6 +8,7 @@ pub mod ingest;
 pub mod journal;
 pub mod link;
 pub mod lint;
+pub mod mentions;
 pub mod page;
 pub mod schema;
 pub mod search;
