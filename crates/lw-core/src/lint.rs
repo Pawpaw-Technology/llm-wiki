@@ -7,6 +7,38 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::LazyLock;
 
+/// A single unlinked-mention finding produced by the `unlinked-mentions` rule.
+/// JSON shape (per issue #102 spec):
+/// `{"rule": "unlinked-mentions", "path": "...", "line": N, "term": "...", "target": "..."}`
+#[derive(Debug, Clone, Serialize)]
+pub struct UnlinkedMentionFinding {
+    /// Always `"unlinked-mentions"` — present in every serialized record so
+    /// a flat list of heterogeneous findings remains self-describing.
+    pub rule: String,
+    /// Wiki-relative path to the page that contains the mention
+    /// (e.g. `wiki/tools/comrak.md`).
+    pub path: String,
+    /// 1-based line number in the page body where the mention occurs.
+    pub line: u32,
+    /// Verbatim text from the body that matched (preserves original casing).
+    pub term: String,
+    /// Slug of the page the term resolves to (not the full path).
+    pub target: String,
+}
+
+impl UnlinkedMentionFinding {
+    /// Format this finding as the canonical human-readable text line:
+    /// `wiki/tools/comrak.md:12 — "tantivy" could link to [[tantivy]]`
+    ///
+    /// Uses an em-dash (U+2014) per the issue #102 text-format spec.
+    pub fn to_text_line(&self) -> String {
+        format!(
+            "{}:{} \u{2014} \"{}\" could link to [[{}]]",
+            self.path, self.line, self.term, self.target
+        )
+    }
+}
+
 static INDEX_LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\]\(([^)]+\.md)\)").expect("INDEX_LINK_RE is a valid regex"));
 
@@ -39,6 +71,26 @@ pub struct LintReport {
     /// Issue #37: signals captures that haven't been triaged.
     #[serde(default)]
     pub stale_journal_pages: Vec<LintFinding>,
+    /// Unlinked mentions found across all vault pages — issue #102.
+    /// One entry per (page, term, target) triple; ambiguous matches produce
+    /// multiple entries (one per matched page), following the one-finding-
+    /// per-offense pattern used by the other rules above.
+    #[serde(default)]
+    pub unlinked_mentions: Vec<UnlinkedMentionFinding>,
+}
+
+impl LintReport {
+    /// Returns `true` if any rule produced at least one finding.
+    /// Used by the CLI to decide the exit code: 0 = clean, 1 = findings.
+    pub fn has_findings(&self) -> bool {
+        !self.todo_pages.is_empty()
+            || !self.broken_related.is_empty()
+            || !self.orphan_pages.is_empty()
+            || !self.missing_concepts.is_empty()
+            || !self.stale_journal_pages.is_empty()
+            || self.freshness.stale > 0
+            || !self.unlinked_mentions.is_empty()
+    }
 }
 
 /// Run all lint checks on the wiki at `root`.
@@ -207,5 +259,8 @@ pub fn run_lint(root: &Path, category: Option<&str>) -> crate::Result<LintReport
             stale_pages,
         },
         stale_journal_pages,
+        // Stub: unlinked-mentions rule is not yet implemented.
+        // Issue #102 implementation fills this in the GREEN step.
+        unlinked_mentions: vec![],
     })
 }
