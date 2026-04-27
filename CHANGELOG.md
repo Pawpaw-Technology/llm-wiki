@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0](https://github.com/Pawpaw-Technology/llm-wiki/compare/v0.3.0...v0.4.0) (2026-04-27)
+
+
+### Features
+
+* **core:** alias index foundation ([#100](https://github.com/Pawpaw-Technology/llm-wiki/issues/100)) ([#113](https://github.com/Pawpaw-Technology/llm-wiki/issues/113)) ([1a49971](https://github.com/Pawpaw-Technology/llm-wiki/commit/1a4997162d3bee3d58af62876b01e1b019ed9933))
+* **core:** unlinked-mention matcher (closes [#101](https://github.com/Pawpaw-Technology/llm-wiki/issues/101)) ([#115](https://github.com/Pawpaw-Technology/llm-wiki/issues/115)) ([d6b2bb9](https://github.com/Pawpaw-Technology/llm-wiki/commit/d6b2bb9ae769e38a771da170df6262acb2d26e27))
+* **lint:** unlinked-mentions rule (closes [#102](https://github.com/Pawpaw-Technology/llm-wiki/issues/102)) ([#116](https://github.com/Pawpaw-Technology/llm-wiki/issues/116)) ([35b6ffd](https://github.com/Pawpaw-Technology/llm-wiki/commit/35b6ffd70f8878432562c71894e1e63038563a38))
+* **mcp:** unlinked_mentions in wiki_write/wiki_new responses (closes [#103](https://github.com/Pawpaw-Technology/llm-wiki/issues/103)) ([#117](https://github.com/Pawpaw-Technology/llm-wiki/issues/117)) ([0e3d1b4](https://github.com/Pawpaw-Technology/llm-wiki/commit/0e3d1b40177c0bf7cfaea7b3656d217363924262))
+
+
+### Bug Fixes
+
+* **lint:** zero-out freshness counts under --rule filter (closes [#118](https://github.com/Pawpaw-Technology/llm-wiki/issues/118)) ([#120](https://github.com/Pawpaw-Technology/llm-wiki/issues/120)) ([ef1958d](https://github.com/Pawpaw-Technology/llm-wiki/commit/ef1958d57513be650ba45a19e3288ddb812f30d8))
+* **search:** cache writer in early-check to avoid LockFailure race ([#119](https://github.com/Pawpaw-Technology/llm-wiki/issues/119)) ([d6b4539](https://github.com/Pawpaw-Technology/llm-wiki/commit/d6b4539d96bd5177189b6422390029ae96c09a2e))
+
 ## [0.3.0](https://github.com/Pawpaw-Technology/llm-wiki/compare/v0.2.6...v0.3.0) (2026-04-26)
 
 
