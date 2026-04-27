@@ -191,6 +191,99 @@ fn lint_rule_filter_unlinked_mentions_json() {
     );
 }
 
+/// `--rule unlinked-mentions --format json` zeroes the entire `freshness` block
+/// so the JSON output does not carry whole-vault freshness carryovers that
+/// would be misleading under a single-rule filter (closes #118).
+///
+/// ## Fixture notes (no git history)
+///
+/// `wiki_with_unlinked_mention()` creates pages in a TempDir without a git repo,
+/// so `page_age_days()` returns `None` for every page and all pages classify as
+/// `Fresh`.  Without `--rule`, the baseline freshness is `{fresh: 2, suspect: 0,
+/// stale: 0}`.  The `fresh == 0` assertion below is therefore the **load-bearing
+/// proof**: under `--rule`, `fresh` must drop from 2 → 0, which only happens if
+/// `apply_rule_filter` zeroes it out.  The `suspect == 0` and `stale == 0`
+/// assertions are belt-and-suspenders — they are naturally 0 in this fixture
+/// (no git history means no age), so they guard against regressions if the
+/// fixture ever grows real git history rather than proving the zero-out today.
+#[test]
+fn lint_rule_filter_freshness_zeroed_in_json() {
+    let tmp = wiki_with_unlinked_mention();
+
+    // ── Baseline: run WITHOUT --rule to confirm this fixture has fresh > 0. ──
+    // This is the "pre-fix" proof: without apply_rule_filter the freshness block
+    // carries whole-vault counts (2 pages → fresh == 2).  If this assertion ever
+    // fails it means the fixture itself changed and the load-bearing assertion
+    // below no longer proves what we think it does.
+    {
+        let baseline = lw()
+            .args([
+                "lint",
+                "--format",
+                "json",
+                "--root",
+                tmp.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        let baseline_stdout = String::from_utf8_lossy(&baseline.stdout);
+        let baseline_json: serde_json::Value =
+            serde_json::from_str(&baseline_stdout).expect("baseline lint json must be valid");
+        assert_eq!(
+            baseline_json["freshness"]["fresh"],
+            serde_json::Value::Number(2.into()),
+            "baseline (no --rule) must show fresh==2 so the filtered fresh==0 assertion \
+             is a genuine proof of zero-out; got: {}",
+            baseline_json["freshness"]
+        );
+    }
+
+    // ── Filtered: run WITH --rule; all freshness counts must be zeroed. ──
+    let output = lw()
+        .args([
+            "lint",
+            "--rule",
+            "unlinked-mentions",
+            "--format",
+            "json",
+            "--root",
+            tmp.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("lint --rule json must emit valid JSON");
+
+    let freshness = &json["freshness"];
+    // Load-bearing: fresh drops from 2 (baseline) → 0 only via zero-out.
+    assert_eq!(
+        freshness["fresh"],
+        serde_json::Value::Number(0.into()),
+        "freshness.fresh must be 0 under --rule filter, got: {freshness}"
+    );
+    // Belt-and-suspenders: naturally 0 in this fixture (no git history).
+    assert_eq!(
+        freshness["suspect"],
+        serde_json::Value::Number(0.into()),
+        "freshness.suspect must be 0 under --rule filter, got: {freshness}"
+    );
+    assert_eq!(
+        freshness["stale"],
+        serde_json::Value::Number(0.into()),
+        "freshness.stale must be 0 under --rule filter, got: {freshness}"
+    );
+    assert_eq!(
+        freshness["stale_pages"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(usize::MAX),
+        0,
+        "freshness.stale_pages must be empty under --rule filter, got: {freshness}"
+    );
+}
+
 /// `--rule unlinked-mentions` also works in text/human mode.
 #[test]
 fn lint_rule_filter_unlinked_mentions_human() {
