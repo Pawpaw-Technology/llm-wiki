@@ -1,5 +1,5 @@
 use crate::output::Format;
-use lw_core::lint::{self, LintReport};
+use lw_core::lint::{self, FreshnessReport, LintReport};
 use std::path::Path;
 use std::process;
 
@@ -46,19 +46,9 @@ pub fn run(
 /// Zero out every rule except `rule_name` so the report is scoped to that
 /// single rule. Unknown rule names leave the report unchanged.
 ///
-/// ## Freshness counts under `--rule`
-///
-/// When a rule filter is active the entire `freshness` block is zeroed out
-/// (fresh, suspect, stale, and stale_pages), not just the counts that are
-/// directly contributed to by the active rule.  The rationale: the block is
-/// populated by a full vault scan, so under `--rule <name>` its non-zero
-/// fields would be whole-vault carryovers that are misleading — they imply the
-/// pass examined and judged every page when in fact only the named rule's
-/// findings are being reported.  Zeroing the entire block (rather than omitting
-/// it) is consistent with what this function already does for the other rule
-/// fields: it clears them in-place rather than restructuring the serialized
-/// output shape.  Consumers that need full freshness data should run `lw lint`
-/// without `--rule`.
+/// The entire `freshness` block is reset (not just `stale`) because fresh and
+/// suspect are whole-vault counts that would be misleading under a single-rule
+/// filter. Consumers needing full freshness data should run without `--rule`.
 fn apply_rule_filter(report: &mut LintReport, rule_name: &str) {
     match rule_name {
         "unlinked-mentions" => {
@@ -67,10 +57,7 @@ fn apply_rule_filter(report: &mut LintReport, rule_name: &str) {
             report.orphan_pages.clear();
             report.missing_concepts.clear();
             report.stale_journal_pages.clear();
-            report.freshness.fresh = 0;
-            report.freshness.suspect = 0;
-            report.freshness.stale = 0;
-            report.freshness.stale_pages.clear();
+            report.freshness = FreshnessReport::default();
         }
         _ => {
             // Unknown rule — run all rules (forward-compatible default).

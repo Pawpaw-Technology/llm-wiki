@@ -210,11 +210,10 @@ fn lint_rule_filter_unlinked_mentions_json() {
 fn lint_rule_filter_freshness_zeroed_in_json() {
     let tmp = wiki_with_unlinked_mention();
 
-    // ── Baseline: run WITHOUT --rule to confirm this fixture has fresh > 0. ──
-    // This is the "pre-fix" proof: without apply_rule_filter the freshness block
-    // carries whole-vault counts (2 pages → fresh == 2).  If this assertion ever
-    // fails it means the fixture itself changed and the load-bearing assertion
-    // below no longer proves what we think it does.
+    // Baseline run (no --rule): confirms the fixture has fresh==2 so the
+    // filtered fresh==0 assertion below is a genuine proof of zero-out, not
+    // just the fixture happening to have no fresh pages. If this fails, the
+    // fixture has changed and the load-bearing assertion needs revisiting.
     {
         let baseline = lw()
             .args([
@@ -238,7 +237,6 @@ fn lint_rule_filter_freshness_zeroed_in_json() {
         );
     }
 
-    // ── Filtered: run WITH --rule; all freshness counts must be zeroed. ──
     let output = lw()
         .args([
             "lint",
@@ -257,13 +255,11 @@ fn lint_rule_filter_freshness_zeroed_in_json() {
         serde_json::from_str(&stdout).expect("lint --rule json must emit valid JSON");
 
     let freshness = &json["freshness"];
-    // Load-bearing: fresh drops from 2 (baseline) → 0 only via zero-out.
     assert_eq!(
         freshness["fresh"],
         serde_json::Value::Number(0.into()),
         "freshness.fresh must be 0 under --rule filter, got: {freshness}"
     );
-    // Belt-and-suspenders: naturally 0 in this fixture (no git history).
     assert_eq!(
         freshness["suspect"],
         serde_json::Value::Number(0.into()),
@@ -277,8 +273,8 @@ fn lint_rule_filter_freshness_zeroed_in_json() {
     assert_eq!(
         freshness["stale_pages"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(usize::MAX),
+            .expect("freshness.stale_pages must be a JSON array")
+            .len(),
         0,
         "freshness.stale_pages must be empty under --rule filter, got: {freshness}"
     );
