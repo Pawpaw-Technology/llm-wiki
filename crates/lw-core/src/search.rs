@@ -407,16 +407,27 @@ impl TantivySearcher {
         op(guard.as_mut().expect("writer opened above"))
     }
 
-    fn check_writer_available(&self) -> Result<()> {
-        let guard = self
+    /// Eagerly acquire the writer if it isn't already cached, so callers
+    /// (currently `rebuild`) can fail fast on a lock conflict before doing
+    /// expensive work. The acquired writer is **stored** in the mutex; we
+    /// must not open-and-drop it here, because tantivy's `IndexWriter` drop
+    /// path is asynchronous (merging threads finish in the background) and
+    /// the lock file can outlive the drop. A subsequent `with_writer` call
+    /// would then race the still-releasing lock and surface a spurious
+    /// `IndexLocked` — the exact flake hit on Linux CI before this change.
+    fn ensure_writer(&self) -> Result<()> {
+        let mut guard = self
             .writer
             .lock()
             .map_err(|e| WikiError::Internal(e.to_string()))?;
         if guard.is_some() {
             return Ok(());
         }
-        match self.index.writer::<TantivyDocument>(50_000_000) {
-            Ok(_writer) => Ok(()),
+        match self.index.writer(50_000_000) {
+            Ok(writer) => {
+                *guard = Some(writer);
+                Ok(())
+            }
             Err(tantivy::TantivyError::LockFailure(..)) => Err(WikiError::IndexLocked {
                 path: self.index_dir.clone(),
             }),
@@ -643,7 +654,7 @@ impl Searcher for TantivySearcher {
 
     #[tracing::instrument(skip(self))]
     fn rebuild(&self, wiki_dir: &Path) -> Result<()> {
-        self.check_writer_available()?;
+        self.ensure_writer()?;
 
         let mut docs = Vec::new();
         let pages = crate::fs::list_pages(wiki_dir)?;
