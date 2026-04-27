@@ -53,7 +53,7 @@ pub struct LintFinding {
 }
 
 /// Freshness summary included in the lint report.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct FreshnessReport {
     pub fresh: usize,
     pub suspect: usize,
