@@ -1,15 +1,40 @@
 ---
 name: llm-wiki:knowledge-capture
-description: Use when the user wants to preserve knowledge from a conversation — a concept explained, a debugging solution found, an architecture decision made, or any insight worth keeping. Extracts, classifies, and writes structured wiki pages via the lw MCP tools.
+description: Use when the user wants to preserve knowledge from a conversation — a concept explained, a debugging solution found, an architecture decision made, or a quick observation to file for later. Extracts, classifies, and writes structured wiki pages (or quick journal captures) via the lw MCP tools.
 when-to-use: |
   Trigger phrases: "add this to my wiki", "capture this", "document this decision", "save what we just figured out",
   "write up this concept", "keep a record of this fix", "document the architecture choice", "add a wiki page for this",
-  "preserve this for later", "make a note of this", "journal this session", "write this up as a guide".
+  "preserve this for later", "make a note of this", "journal this thought", "quick capture this", "write this up as a guide".
   Also trigger proactively after: resolving a non-trivial debugging session, making an architecture decision,
   explaining a library or tool in depth, walking through a how-to that took real effort to figure out.
 ---
 
-You are helping the user capture knowledge from a conversation into their llm-wiki vault. Follow the 7-step workflow below. Each step is concrete; do not skip steps or batch them silently.
+You are helping the user capture knowledge from a conversation into their llm-wiki vault. Two paths:
+
+- **Full page** — durable knowledge worth structuring. Follow the 7-step workflow below.
+- **Quick capture** — a thought to keep but not worth structuring now. Use `wiki_capture`; triage later (see **Journal triage**).
+
+Pick the right path before doing anything.
+
+## Pick the path
+
+```
+Is it raw source material (article, paper, transcript) to file before distilling?
+  → wiki_ingest (lands in raw/, NOT in wiki/). Promote later by reading raw and creating a wiki page.
+
+Is it a quick thought, observation, or link worth keeping but not worth structuring now?
+  → wiki_capture (lands in wiki/_journal/YYYY-MM-DD.md, timestamped). Triage later.
+
+Is it knowledge to preserve as a permanent wiki page (concept / guide / decision / reference)?
+  → wiki_new + wiki_write (full 7-step workflow below).
+
+Is it an addition to an existing page?
+  → wiki_write upsert_section / append_section. Skip Step 4; jump to Step 5 existing-page path.
+```
+
+When in doubt between capture and full page: capture is cheaper and reversible. Promote later.
+
+---
 
 ## Step 1 — Extract
 
@@ -21,7 +46,7 @@ Identify what is worth capturing from the conversation. Look for:
 - **References**: API surfaces, configuration schemas, interface specs
 - **Journal entries**: freeform session logs, meeting notes, timestamped observations
 
-If multiple distinct pieces of knowledge surface, list them and ask the user which to capture first, or capture each in turn.
+If multiple distinct pieces surface, list them and ask the user which to capture first, or capture each in turn.
 
 ## Step 2 — Classify
 
@@ -33,13 +58,15 @@ Map the extracted knowledge to exactly one content type:
 | `guide`     | You're documenting how to _do_ something — a procedure, fix, or walkthrough  |
 | `decision`  | You're recording a choice made and why — architecture, tooling, process      |
 | `reference` | You're documenting an interface to look up — API, config schema, CLI flags   |
-| `journal`   | Freeform timestamped log; no fixed structure needed                          |
+| `journal`   | Freeform timestamped log; use `wiki_capture`, not the full workflow          |
 
 The type drives the page template in Step 5.
 
 ## Step 3 — Search
 
 Before creating a new page, check whether one already exists. **Update existing > create new.**
+
+Basic search:
 
 ```json
 {
@@ -48,39 +75,76 @@ Before creating a new page, check whether one already exists. **Update existing 
 }
 ```
 
+Filtered search — `wiki_query` accepts frontmatter filters:
+
+```json
+{
+  "tool": "wiki_query",
+  "args": {
+    "query": "comrak",
+    "tags": "rust,markdown",
+    "category": "tools",
+    "sort": "created_desc",
+    "limit": 5
+  }
+}
+```
+
+Filter reference:
+
+- `tags` — comma-separated, AND-ed; case-sensitive
+- `category` — directory name; case-sensitive
+- `status` — frontmatter `status` field (e.g. `draft`, `published`)
+- `author` — frontmatter `author` field
+- `sort` — `relevance` (default) | `created_desc` | `created_asc` | `title`
+
+For pure-frontmatter queries (e.g. "all draft pages by alice, newest first") pass an empty `query` with the filters set.
+
 If a hit looks relevant, read it:
 
 ```json
 { "tool": "wiki_read", "args": { "path": "<category>/<slug>.md" } }
 ```
 
-If the existing page covers the topic: update it (go to Step 5, existing-page path). If not: create a new page (continue to Step 4).
+If the existing page covers the topic: update it (Step 5, existing-page path). Otherwise: continue to Step 4.
 
 ## Step 4 — Locate
 
-### Pick a category
+### Pick a category from the schema
 
-Read `.lw/schema.toml` with `wiki_read` if you need to confirm available categories. Typical categories in a starter vault: `concepts`, `guides`, `decisions`, `tools`, `reference`, `_journal`. Choose the one that fits — categories are directories, not tags.
+Categories are directories, not tags. Each vault's `.lw/schema.toml` is the source of truth — never memorize a default set; read it:
+
+```json
+{ "tool": "wiki_read", "args": { "path": ".lw/schema.toml" } }
+```
+
+Each `[categories.<name>]` block declares:
+
+- `required_fields` — frontmatter fields you must pass to `wiki_new` (e.g. `["title", "tags", "author"]`)
+- `template` — the body skeleton `wiki_new` produces
+- `review_days` — how long before lint marks the page stale
+
+If you call `wiki_new` with a missing required field, the error names it: `"category guides requires field: author"`. Add the field and retry — no separate introspection call needed.
 
 ### Check existing tags
 
-Reuse existing tags rather than inventing new ones:
+Reuse before inventing:
 
 ```json
 { "tool": "wiki_tags", "args": {} }
 ```
 
-Pick tags from the returned list. Add a new tag only if none of the existing ones fit.
+Add a new tag only when nothing existing fits.
 
 ### Generate a slug
 
-Use lowercase kebab-case: `comrak-ast-parser`, `ci-lockfile-failure`, `tantivy-vs-sqlite-fts`. The slug becomes the filename.
+Lowercase kebab-case, must match `[a-z0-9_-]+` (no path separators): `comrak-ast-parser`, `ci-lockfile-failure`, `tantivy-vs-sqlite-fts`. The slug becomes the filename.
 
 ## Step 5 — Create or Update
 
 ### New page
 
-First scaffold with `wiki_new` (this creates the file and enforces schema):
+Scaffold with `wiki_new` — creates the file with schema-validated frontmatter and body template:
 
 ```json
 {
@@ -94,7 +158,7 @@ First scaffold with `wiki_new` (this creates the file and enforces schema):
 }
 ```
 
-Then fill body sections with `wiki_write` in `upsert_section` mode. Use the template for the content type (see **Content type templates** below).
+Then fill body sections with `wiki_write` `upsert_section`. Use the template for the content type (see **Content type templates** below).
 
 ```json
 {
@@ -103,16 +167,16 @@ Then fill body sections with `wiki_write` in `upsert_section` mode. Use the temp
     "path": "tools/comrak-ast-parser.md",
     "mode": "upsert_section",
     "section": "Overview",
-    "content": "Comrak is a CommonMark-compliant Rust parser that exposes a full AST, enabling programmatic markdown manipulation."
+    "content": "Comrak is a CommonMark-compliant Rust parser that exposes a full AST..."
   }
 }
 ```
 
-Repeat for each section in the template.
+Repeat for each section. The `section` arg is case-insensitive; pass the heading text without `##` prefix.
 
 ### Existing page
 
-Use `upsert_section` to replace a section or `append_section` to add new content at the end of a section:
+`upsert_section` (replace section content) or `append_section` (add at end of section):
 
 ````json
 {
@@ -126,88 +190,161 @@ Use `upsert_section` to replace a section or `append_section` to add new content
 }
 ````
 
-### Source attribution
+If the section heading does not exist, both modes create it at the end of the page; the response carries `"warning": "Section 'X' not found; created at end of page"`.
 
-If the knowledge originates from a specific URL, paper, or external resource, include it in frontmatter. Since `wiki_new` creates the page, add `source:` by rewriting the frontmatter via `overwrite` mode immediately after scaffolding, or append it to the existing page's frontmatter manually. Document the source URL in the body's **See Also** or **References** section at minimum.
+### Quick capture (skip the full workflow)
 
-### Journal entries
-
-Write directly via `wiki_write` in `overwrite` mode to `_journal/YYYY-MM-DD.md`. Include a YAML frontmatter block with `title:` and `tags:`. No `wiki_new` needed for journals — journals are freeform.
+For ephemeral notes, use `wiki_capture` instead of `wiki_write`:
 
 ```json
 {
-  "tool": "wiki_write",
+  "tool": "wiki_capture",
   "args": {
-    "path": "_journal/2026-04-25.md",
-    "mode": "overwrite",
-    "content": "---\ntitle: \"2026-04-25\"\ntags: [journal]\n---\n\n## Session\n\n..."
+    "content": "comrak's format_commonmark unwraps nested lists when re-emitting",
+    "tags": ["rust", "markdown", "comrak"],
+    "source": "https://docs.rs/comrak"
   }
 }
 ```
 
+Auto-creates `wiki/_journal/YYYY-MM-DD.md` if needed, prepends `**HH:MM**`, appends to a `## Captures` section. No frontmatter to write, no section logic, no schema check. Captures sit in the journal until promoted (see **Journal triage**).
+
+### Act on `unlinked_mentions`
+
+Every `wiki_write` and `wiki_new` response includes:
+
+```json
+{
+  "status": "ok",
+  "path": "tools/comrak-ast-parser.md",
+  "unlinked_mentions": [
+    {
+      "term": "tantivy",
+      "target_slug": "tantivy",
+      "line": 12,
+      "context": "...uses tantivy for indexing..."
+    }
+  ]
+}
+```
+
+Each entry is a phrase in your written content that matches an existing page's title or alias but is not yet wrapped in `[[wikilinks]]`. **Decide per entry**:
+
+- The mention is genuinely about that page → wrap it. Rewrite the section with `[[target-slug]]` via `upsert_section`.
+- The mention is coincidental (homonym, common API symbol, generic word) → ignore.
+
+Do not blindly link every mention.
+
+### Source attribution
+
+If knowledge originates from an external URL, paper, or tool output, record it in the body's **See Also** / **References** section. To set the `sources:` frontmatter field, use the read-modify-write pattern (see Step 6 — `upsert_section` does not touch frontmatter).
+
 ## Step 6 — Link
 
-An orphan page (no inbound links) is a knowledge dead end. After creating a page:
+An orphan page is a knowledge dead end. After creating a page:
 
-1. **Find related pages** — search by bare slug and topic keywords. Tantivy treats `[...]` as range
-   query syntax, so pass the slug without brackets; it will match wherever the slug appears inside
-   `[[slug]]` wikilinks in page bodies:
+### 1. Discover related pages — two paths
 
-```json
-{ "tool": "wiki_query", "args": { "query": "comrak-ast-parser" } }
-```
-
-Also search by topic keywords to catch pages that do not yet have a wikilink to this slug:
+For pages **already** linking to this topic:
 
 ```json
-{ "tool": "wiki_query", "args": { "query": "markdown parser rust ast" } }
+{ "tool": "wiki_backlinks", "args": { "path": "comrak-ast-parser" } }
 ```
 
-2. **Add outbound wikilinks** in the new page's body. Use `[[slug]]` syntax for related pages.
+Returns entries with `kind: "wikilink"` (body `[[link]]`) or `kind: "related"` (frontmatter entries). Use this to understand existing context before adding more links. Bare-slug mentions are NOT backlinks.
 
-3. **Update inbound links** — for each related page found, add `[[new-slug]]` to its relevant section
-   via `upsert_section` or `append_section`.
-
-4. **Update `related:` frontmatter** — `upsert_section`/`append_section` preserve the original
-   frontmatter unchanged. To modify frontmatter you must use the read-modify-write pattern:
-   a. Read the existing page with `wiki_read`.
-   b. Reconstruct the full page content with the updated `related:` list in the YAML block.
-   c. Write back with `wiki_write` mode `overwrite`.
-
-   Example (adding `comrak-ast-parser` to a related page's frontmatter):
+For pages that **should** link to you but don't yet — search by topic keywords (Tantivy treats `[...]` as range syntax, so pass slugs without brackets):
 
 ```json
-{ "tool": "wiki_read", "args": { "path": "tools/markdown-tooling.md" } }
+{
+  "tool": "wiki_query",
+  "args": { "query": "markdown parser rust ast", "limit": 5 }
+}
 ```
 
-Then, after assembling the updated content:
+### 2. Add outbound wikilinks
+
+In the new page's body (typically in **Related** or **See Also**), add `[[slug]]` references to pages your content relates to.
+
+### 3. Update inbound links
+
+For each related page found, append the wikilink:
 
 ```json
 {
   "tool": "wiki_write",
   "args": {
     "path": "tools/markdown-tooling.md",
-    "mode": "overwrite",
-    "content": "---\ntitle: \"Markdown Tooling\"\ntags: [markdown, rust]\nrelated: [comrak-ast-parser]\n---\n\n<original body here>"
+    "mode": "upsert_section",
+    "section": "Related",
+    "content": "- [[comrak-ast-parser]]"
   }
 }
 ```
 
+### 4. Update `related:` frontmatter (when needed)
+
+`upsert_section` and `append_section` preserve frontmatter unchanged. To modify frontmatter, use read-modify-write:
+
+```json
+{ "tool": "wiki_read", "args": { "path": "concepts/full-text-search.md" } }
+```
+
+Then overwrite with the modified frontmatter:
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "concepts/full-text-search.md",
+    "mode": "overwrite",
+    "content": "---\ntitle: \"Full-Text Search\"\ntags: [search, rust]\nrelated: [comrak-ast-parser]\n---\n\n<original body here>"
+  }
+}
+```
+
+Body wikilinks suffice for most cases. `related:` frontmatter is for explicit, schema-tracked associations (e.g. ADRs that supersede earlier ADRs).
+
 ## Step 7 — Verify
 
-Read back the page to confirm it looks right:
+Read back:
 
 ```json
 { "tool": "wiki_read", "args": { "path": "tools/comrak-ast-parser.md" } }
 ```
 
-Run lint to catch orphans, broken links, and freshness issues:
+Run lint:
 
 ```json
 { "tool": "wiki_lint", "args": {} }
 ```
 
-Report the result to the user: page path, title, tags, and any lint warnings. If lint reports the new page as an orphan, go back to Step 6.
+The lint summary returns counts for: stale freshness, TODO markers, broken `related:` entries, orphan pages, missing concepts (broken wikilinks), and `stale_journal_pages` (journal pages older than the configured threshold).
+
+Address findings that point at what you just wrote:
+
+- **orphan** → go back to Step 6
+- **missing-concept** → either create the missing target page or remove the wikilink
+- **broken-related** → fix the path in frontmatter
+
+Report to the user: page path, title, tags, and any unresolved lint findings.
+
+---
+
+## Journal triage
+
+Captures accumulate in `wiki/_journal/YYYY-MM-DD.md`. Lint flags journal pages whose last commit is older than `[journal] stale_after_days` (default 7) as `stale_journal_pages`.
+
+When the user asks you to triage, or when `wiki_lint` reports stale captures:
+
+1. **Read the flagged journal**: `wiki_read _journal/YYYY-MM-DD.md`
+2. **Walk each capture line**, decide:
+   - **Promote** — durable knowledge → run the full 7-step workflow to extract it into a permanent page; in the journal, replace the line with a back-reference like `**14:32** [promoted to [[target-slug]]] <one-line summary>`.
+   - **Keep as-is** — useful as a session log but not page-worthy → leave it.
+   - **Discard** — trivial in retrospect → delete the line.
+3. **Touch the journal** by committing the change (`wiki_write` mode `overwrite` against the journal does this). The new commit timestamp clears the staleness flag.
+
+The journal is **never the source of truth** — it's an inbox. Promoted knowledge always gets its own permanent page.
 
 ---
 
@@ -235,11 +372,11 @@ Use for: architecture choices, tooling selections, process changes. Capture the 
 
 Sections: **Overview** → **API / Interface** → **Configuration** → **Examples** → **See Also**
 
-Use for: API surfaces, CLI flag references, config schemas, anything you look up, not read linearly.
+Use for: API surfaces, CLI flag references, config schemas — anything you look up, not read linearly.
 
 ### journal
 
-Freeform. Suggested headings: **Session**, **Decisions**, **Open Questions**, **Next Steps**. Always timestamped.
+Freeform. `wiki_capture` handles the structure. If you must write directly, suggested headings: **Captures**, **Decisions**, **Open Questions**, **Next Steps**.
 
 ---
 
@@ -247,11 +384,9 @@ Freeform. Suggested headings: **Session**, **Decisions**, **Open Questions**, **
 
 ### Example 1 — Rust crate → concept page
 
-**Situation**: The user and agent spent time understanding how `comrak` exposes its AST and how to walk it in Rust.
+You and the user spent time understanding how `comrak` exposes its AST. Type = `concept`, category = `tools`.
 
-**Step 1**: Knowledge type = concept (what comrak is and how it works).
-**Step 2**: Type = `concept`.
-**Step 3**: Search first.
+Search first:
 
 ```json
 {
@@ -260,11 +395,9 @@ Freeform. Suggested headings: **Session**, **Decisions**, **Open Questions**, **
 }
 ```
 
-No hit — proceed to create.
+No hit. Reuse `rust`, `markdown` from `wiki_tags`; add `ast`.
 
-**Step 4**: Category = `tools`, tags from `wiki_tags` → reuse `rust`, `markdown`; add `ast` (new).
-
-**Step 5a**: Scaffold.
+Scaffold:
 
 ```json
 {
@@ -278,19 +411,7 @@ No hit — proceed to create.
 }
 ```
 
-**Step 5b**: Fill sections.
-
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "tools/comrak-ast-parser.md",
-    "mode": "upsert_section",
-    "section": "Overview",
-    "content": "Comrak is a CommonMark-compliant Rust crate that parses markdown into a full AST, enabling programmatic inspection and transformation."
-  }
-}
-```
+Fill sections — Overview, Key Properties, Examples — via `wiki_write upsert_section` (one call each):
 
 ```json
 {
@@ -299,29 +420,14 @@ No hit — proceed to create.
     "path": "tools/comrak-ast-parser.md",
     "mode": "upsert_section",
     "section": "Key Properties",
-    "content": "- Arena-allocated AST nodes (`Arena<AstNode>`)\n- Full CommonMark + GFM extension support\n- Zero-copy where possible\n- `format_commonmark` round-trips cleanly"
+    "content": "- Arena-allocated AST nodes (`Arena<AstNode>`)\n- Full CommonMark + GFM extension support\n- `format_commonmark` round-trips cleanly for most inputs"
   }
 }
 ```
 
-````json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "tools/comrak-ast-parser.md",
-    "mode": "upsert_section",
-    "section": "Examples",
-    "content": "```rust\nlet arena = Arena::new();\nlet root = parse_document(&arena, input, &Options::default());\nfor node in root.descendants() {\n    // inspect node.data.borrow().value\n}\n```"
-  }
-}
-````
+Each response carries `unlinked_mentions`. If the Examples block mentions `tantivy` and an existing `tantivy` page exists, you'll see `{"term": "tantivy", "target_slug": "tantivy", ...}` — wrap it in the next `upsert_section`.
 
-**Step 6**: Search by bare slug (Tantivy range syntax forbids brackets) and topic keywords to find
-related pages, then add `[[comrak-ast-parser]]` to their Related section.
-
-```json
-{ "tool": "wiki_query", "args": { "query": "comrak-ast-parser" } }
-```
+Find related pages (no brackets):
 
 ```json
 {
@@ -330,7 +436,7 @@ related pages, then add `[[comrak-ast-parser]]` to their Related section.
 }
 ```
 
-For each related page found, append the wikilink to its Related section:
+For each related hit, append the wikilink:
 
 ```json
 {
@@ -344,9 +450,7 @@ For each related page found, append the wikilink to its Related section:
 }
 ```
 
-The linking here is bidirectional `[[wikilink]]` references in body content only. Frontmatter `related:` updates require the read-modify-write pattern (see Example 3 for the full JSON sequence).
-
-**Step 7**: Read back and lint.
+Verify:
 
 ```json
 { "tool": "wiki_read", "args": { "path": "tools/comrak-ast-parser.md" } }
@@ -356,132 +460,102 @@ The linking here is bidirectional `[[wikilink]]` references in body content only
 { "tool": "wiki_lint", "args": {} }
 ```
 
-Confirm no orphan warning. If the page still shows as an orphan, go back to Step 6.
+If `orphan_count` includes the new page, go back to Step 6.
 
 ---
 
-### Example 2 — Debugging session → guide page
+### Example 2 — Capture → triage → promote
 
-**Situation**: A CI job failed because `Cargo.lock` was out of date after adding a dependency. The fix was to run `cargo generate-lockfile` locally and commit the result.
+Demonstrates the journal-first workflow: a quick capture, then promotion days later.
 
-**Step 1**: Knowledge = how to resolve a stale Cargo.lock CI failure.
-**Step 2**: Type = `guide`.
-**Step 3**:
+**Day 1, mid-session.** While debugging, you find a non-obvious comrak behavior. Worth keeping but you don't want to break flow:
 
 ```json
 {
-  "tool": "wiki_query",
-  "args": { "query": "cargo lock CI failure", "limit": 5 }
-}
-```
-
-No relevant hit.
-
-**Step 4**: Category = `guides`, tags → `rust`, `ci`, `cargo` (check `wiki_tags` first).
-
-**Step 5a**: Scaffold.
-
-```json
-{
-  "tool": "wiki_new",
+  "tool": "wiki_capture",
   "args": {
-    "category": "guides",
-    "slug": "fix-stale-cargo-lock-ci",
-    "title": "Fix: Stale Cargo.lock in CI",
-    "tags": ["rust", "ci", "cargo"]
+    "content": "comrak's format_commonmark unwraps nested lists when re-emitting — surprising for round-tripping",
+    "tags": ["rust", "markdown", "comrak"],
+    "source": "https://docs.rs/comrak"
   }
 }
 ```
 
-**Step 5b**: Fill sections.
+Response:
 
 ```json
 {
-  "tool": "wiki_write",
-  "args": {
-    "path": "guides/fix-stale-cargo-lock-ci.md",
-    "mode": "upsert_section",
-    "section": "Overview",
-    "content": "CI fails with `error: the lock file needs to be updated` after adding or updating a Cargo dependency without committing the updated `Cargo.lock`."
-  }
+  "status": "ok",
+  "path": "wiki/_journal/2026-04-28.md",
+  "created": true,
+  "line": "**14:32** comrak's format_commonmark unwraps nested lists ... `#rust` `#markdown` `#comrak` ([source](https://docs.rs/comrak))"
 }
 ```
 
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "guides/fix-stale-cargo-lock-ci.md",
-    "mode": "upsert_section",
-    "section": "Steps",
-    "content": "1. Run `cargo generate-lockfile` (or `cargo build`) locally.\n2. Verify `Cargo.lock` is modified: `git diff Cargo.lock`.\n3. `git add Cargo.lock && git commit -m \"chore: update Cargo.lock\"`\n4. Push. CI should pass."
-  }
-}
-```
+Move on. Done.
 
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "guides/fix-stale-cargo-lock-ci.md",
-    "mode": "upsert_section",
-    "section": "Troubleshooting",
-    "content": "- If `Cargo.lock` is in `.gitignore`, remove it for application crates (libraries may legitimately omit it).\n- If CI uses a different Rust toolchain version, pin with `rust-toolchain.toml`."
-  }
-}
-```
-
-**Step 6**: Search by bare slug and topic keywords (no brackets — Tantivy treats `[...]` as range
-syntax), then add `[[fix-stale-cargo-lock-ci]]` to related pages' bodies.
-
-```json
-{ "tool": "wiki_query", "args": { "query": "fix-stale-cargo-lock-ci" } }
-```
-
-```json
-{
-  "tool": "wiki_query",
-  "args": { "query": "cargo ci lockfile rust", "limit": 5 }
-}
-```
-
-For each related page found, append the wikilink:
-
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "guides/rust-ci-tips.md",
-    "mode": "upsert_section",
-    "section": "Related",
-    "content": "- [[fix-stale-cargo-lock-ci]]"
-  }
-}
-```
-
-The linking here is bidirectional `[[wikilink]]` references in body content only. Frontmatter `related:` updates require the read-modify-write pattern (see Example 3 for the full JSON sequence).
-
-**Step 7**: Read back and lint.
-
-```json
-{ "tool": "wiki_read", "args": { "path": "guides/fix-stale-cargo-lock-ci.md" } }
-```
+**Day 8, triage prompt.** User says "any captures to triage?"
 
 ```json
 { "tool": "wiki_lint", "args": {} }
 ```
 
-Confirm no orphan warning. If the page still shows as an orphan, go back to Step 6.
+Response includes `stale_journal_pages: ["_journal/2026-04-28.md"]`. Read it:
+
+```json
+{ "tool": "wiki_read", "args": { "path": "_journal/2026-04-28.md" } }
+```
+
+The comrak observation is durable knowledge — promote it. Search for an existing target:
+
+```json
+{ "tool": "wiki_query", "args": { "query": "comrak", "category": "tools" } }
+```
+
+Hit: `tools/comrak-ast-parser.md` already exists. Append the gotcha rather than creating a new page:
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "tools/comrak-ast-parser.md",
+    "mode": "append_section",
+    "section": "Gotchas",
+    "content": "- `format_commonmark` unwraps nested lists when re-emitting; not safe for round-tripping deeply nested markdown ([source](https://docs.rs/comrak))."
+  }
+}
+```
+
+Response includes `unlinked_mentions: [{"term": "format_commonmark", ...}]` — that's an API symbol, not a wiki page; ignore.
+
+(If `wiki_query` had returned no hit, you'd run `wiki_new` for a fresh page and complete Steps 5–7 instead.)
+
+Replace the journal line with a back-reference (read-modify-write, since journal frontmatter must be preserved):
+
+```json
+{ "tool": "wiki_read", "args": { "path": "_journal/2026-04-28.md" } }
+```
+
+```json
+{
+  "tool": "wiki_write",
+  "args": {
+    "path": "_journal/2026-04-28.md",
+    "mode": "overwrite",
+    "content": "---\ntitle: \"2026-04-28\"\ntags: [journal]\ncreated: 2026-04-28\n---\n\n## Captures\n\n- **14:32** [promoted to [[comrak-ast-parser]]] comrak nested-list unwrap gotcha\n"
+  }
+}
+```
+
+The new commit clears the staleness flag. Re-lint to confirm `stale_journal_count: 0`.
 
 ---
 
-### Example 3 — Architecture decision → decision record
+### Example 3 — Architecture decision → ADR
 
-**Situation**: The team chose Tantivy (Rust full-text search) over SQLite FTS5 for the wiki search backend.
+Team chose Tantivy over SQLite FTS5 for search. Type = `decision`, category = `decisions`.
 
-**Step 1**: Knowledge = architecture decision with rationale and alternatives.
-**Step 2**: Type = `decision`.
-**Step 3**:
+Search:
 
 ```json
 {
@@ -490,11 +564,9 @@ Confirm no orphan warning. If the page still shows as an orphan, go back to Step
 }
 ```
 
-No hit.
+No hit. Tags: `rust`, `search`, `architecture`.
 
-**Step 4**: Category = `decisions`, tags → `rust`, `search`, `architecture`.
-
-**Step 5a**: Scaffold.
+Scaffold:
 
 ```json
 {
@@ -508,31 +580,7 @@ No hit.
 }
 ```
 
-**Step 5b**: Fill sections.
-
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "decisions/tantivy-over-sqlite-fts.md",
-    "mode": "upsert_section",
-    "section": "Context",
-    "content": "The wiki needs full-text search across potentially thousands of markdown pages. We evaluated embedded options to avoid external service dependencies."
-  }
-}
-```
-
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "decisions/tantivy-over-sqlite-fts.md",
-    "mode": "upsert_section",
-    "section": "Decision",
-    "content": "Use Tantivy (`tantivy` crate) as the search backend, with an on-disk index stored in `.lw/index/`."
-  }
-}
-```
+Fill the five ADR sections via `wiki_write upsert_section`. Excerpt:
 
 ```json
 {
@@ -541,51 +589,16 @@ No hit.
     "path": "decisions/tantivy-over-sqlite-fts.md",
     "mode": "upsert_section",
     "section": "Rationale",
-    "content": "- Tantivy is purpose-built for full-text search; BM25 scoring out of the box.\n- SQLite FTS5 lacks snippet highlighting and relevance tuning without significant custom work.\n- Tantivy's `IndexWriter`/`IndexReader` split maps naturally to the `lw serve` (writer) vs `lw query` (reader) concurrency model.\n- Pure Rust; no C FFI needed beyond what rusqlite already pulls in."
+    "content": "- Tantivy is purpose-built for full-text search; BM25 scoring out of the box.\n- SQLite FTS5 lacks snippet highlighting and relevance tuning without significant custom work.\n- Tantivy's `IndexWriter`/`IndexReader` split maps naturally to the `lw serve` (writer) vs `lw query` (reader) concurrency model.\n- Pure Rust; no extra C FFI."
   }
 }
 ```
 
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "decisions/tantivy-over-sqlite-fts.md",
-    "mode": "upsert_section",
-    "section": "Alternatives",
-    "content": "- **SQLite FTS5**: Simpler dependency story, but weaker scoring and no built-in snippets.\n- **Meilisearch** (external): Excellent UX but requires a running service — not viable for a local CLI tool.\n- **In-memory grep**: Zero dependencies but O(n) on every query; unacceptable at scale."
-  }
-}
-```
+Repeat for **Context**, **Decision**, **Alternatives**, **Consequences**.
 
-```json
-{
-  "tool": "wiki_write",
-  "args": {
-    "path": "decisions/tantivy-over-sqlite-fts.md",
-    "mode": "upsert_section",
-    "section": "Consequences",
-    "content": "- The `IndexWriter` must be opened lazily (not in `WikiMcpServer::new`) to avoid holding the write lock for the MCP server's lifetime.\n- A `WikiError::IndexLocked` fallback lets read-only callers degrade gracefully.\n- Index rebuild on first run; subsequent starts skip rebuild if index is non-empty."
-  }
-}
-```
+Link related pages — ADRs benefit from explicit `related:` frontmatter, so use both body wikilinks and frontmatter.
 
-**Step 6**: Search by bare slug and topic keywords (no brackets — Tantivy treats `[...]` as range
-syntax), add `[[tantivy-over-sqlite-fts]]` to related pages' bodies, then update `related:`
-frontmatter via the read-modify-write pattern (section writes leave frontmatter unchanged).
-
-```json
-{ "tool": "wiki_query", "args": { "query": "tantivy-over-sqlite-fts" } }
-```
-
-```json
-{
-  "tool": "wiki_query",
-  "args": { "query": "search architecture backend rust", "limit": 5 }
-}
-```
-
-For each related page, append the wikilink to its body:
+Body link:
 
 ```json
 {
@@ -599,8 +612,7 @@ For each related page, append the wikilink to its body:
 }
 ```
 
-To also update `related:` frontmatter, read the page first, then overwrite with the modified
-frontmatter block:
+Frontmatter `related:` requires read-modify-write:
 
 ```json
 { "tool": "wiki_read", "args": { "path": "concepts/full-text-search.md" } }
@@ -612,12 +624,12 @@ frontmatter block:
   "args": {
     "path": "concepts/full-text-search.md",
     "mode": "overwrite",
-    "content": "---\ntitle: \"Full-Text Search\"\ntags: [search, rust]\nrelated: [tantivy-over-sqlite-fts]\n---\n\n<original body here>"
+    "content": "---\ntitle: \"Full-Text Search\"\ntags: [search, rust]\nrelated: [tantivy-over-sqlite-fts]\n---\n\n<original body>"
   }
 }
 ```
 
-**Step 7**:
+Verify:
 
 ```json
 {
@@ -634,26 +646,26 @@ frontmatter block:
 
 ## Hard rules
 
-- **Never create orphan pages.** Every new page must have at least one inbound link from an existing
-  page, or be linked from a category index. Confirm with `wiki_query "<slug>"` (bare slug, no
-  brackets — Tantivy treats `[...]` as range syntax) after linking; it will match wherever the slug
-  appears inside `[[slug]]` wikilinks in page bodies.
-- **Reuse existing tags.** Always call `wiki_tags` before inventing a new tag. New tags only when nothing existing fits.
-- **Update existing pages before creating duplicates.** If `wiki_query` returns a close match, read it and decide: update vs. new page. Near-duplicates degrade the wiki.
-- **Attribute sources.** When knowledge comes from an external URL, paper, or tool output, record it in the body's **See Also** / **References** section. Do not invent publication dates or authors.
-- **Never silent-fail.** If a tool call returns an error, report it to the user and explain what went wrong before continuing.
-- **Do not reference unshipped tools.** `wiki_capture` and `wiki_backlinks` do not exist yet. Use
-  `wiki_query "<slug>"` (bare slug, no brackets) to find pages that mention a given page (backlink
-  simulation). Use `wiki_write` for all capture workflows.
+- **Never create orphan pages.** Every new page must have at least one inbound link from another page or be linked from a category index. After Step 6, confirm with `wiki_lint`.
+- **Reuse existing tags.** Always call `wiki_tags` before inventing a new tag. New tags only when nothing fits.
+- **Update existing pages before creating duplicates.** If `wiki_query` returns a close match, read it and update; don't create near-duplicates.
+- **Read the schema before assuming categories.** Each vault's `.lw/schema.toml` is the source of truth for available categories and their `required_fields`. Don't memorize a default set — read it.
+- **Act on `unlinked_mentions` thoughtfully.** Every write returns a list of phrases that match existing pages but aren't wrapped in `[[...]]`. Decide per entry: link if genuinely about that page, ignore if coincidental.
+- **Backlinks include `[[wikilinks]]` and `related:` only.** Bare-slug mentions are NOT backlinks. To find pages mentioning a topic without linking, use `wiki_query` topic search.
+- **Capture is reversible; pages aren't.** When in doubt, `wiki_capture` first, promote later. A misclassified permanent page is harder to undo.
+- **Attribute sources.** External URLs, papers, or tool outputs go in **See Also** / **References** in the body, or in `sources:` frontmatter. Do not invent dates or authors.
+- **Never silent-fail.** If a tool call returns an error, report it and explain before continuing.
 
 ## MCP tools available
 
-- `wiki_query` — full-text search with optional `tags`, `category`, `limit` filters; returns hits with paths, titles, scores, snippets
-- `wiki_read` — read a page by `path` (relative within wiki/); returns frontmatter fields + body
-- `wiki_browse` — list pages filtered by `category`, `tag`, or `stale_only`
-- `wiki_tags` — list all tags with page counts; optional `category` filter
-- `wiki_new` — scaffold a new page; required args: `category`, `slug`, `title`; optional: `tags` (array), `author`
-- `wiki_write` — write or update a page; `path` + `content` required; `mode`: `overwrite` (default, full page with frontmatter) | `append_section` | `upsert_section`; `section` required for append/upsert modes
-- `wiki_ingest` — file raw source material into `raw/`; pass `source_path` (file/URL) OR `content` (pasted markdown), not both; optional: `filename`, `raw_type`, `title`, `tags`, `category`
-- `wiki_lint` — run freshness, orphan, broken-link, and TODO checks; optional `category` filter
-- `wiki_stats` — wiki health overview: page count, category breakdown, freshness distribution; no arguments
+- `wiki_query` — full-text search. Optional filters: `tags` (CSV, AND-ed, case-sensitive), `category`, `status`, `author`. `sort` ∈ `relevance` (default) | `created_desc` | `created_asc` | `title`. `limit` default 20. **Tantivy treats `[...]` as range syntax — search bare slugs without brackets.**
+- `wiki_read` — read a page by `path` (vault-relative, e.g. `tools/comrak.md` or `.lw/schema.toml`); returns frontmatter fields + body + full markdown.
+- `wiki_browse` — list pages filtered by `category`, `tag`, or `stale_only` boolean.
+- `wiki_tags` — list all tags with page counts; optional `category` filter.
+- `wiki_new` — scaffold a new page. Required: `category`, `slug` (`[a-z0-9_-]+`), `title`. Optional: `tags` (array), `author`. Errors name missing schema-required fields. Returns `unlinked_mentions`. Auto-commits unless `commit: false`.
+- `wiki_write` — write/update a page. Required: `path`, `content`. `mode` ∈ `overwrite` (default) | `append_section` | `upsert_section`. `section` required for the latter two (case-insensitive heading match, no `##` prefix). Returns `unlinked_mentions`. Auto-commits unless `commit: false`; `push: true` pushes after.
+- `wiki_capture` — append a timestamped entry to today's journal (`wiki/_journal/YYYY-MM-DD.md`); auto-creates the page if needed. Required: `content`. Optional: `tags`, `source`. Auto-commits.
+- `wiki_backlinks` — return pages linking to a target. Arg: `path` (slug, category-relative, or vault path). Returns entries with `kind` ∈ `wikilink` | `related` and a `context` snippet for wikilinks.
+- `wiki_ingest` — file source material into `raw/` (NOT `wiki/`). Pass `source_path` (file/URL) OR `content` (pasted markdown), not both. Optional: `filename`, `raw_type` ∈ `papers` | `articles` | `assets`, `title`, `tags`, `category` (suggested for the eventual page).
+- `wiki_lint` — lint checks: stale pages, TODO markers, broken `related:`, orphans, missing concepts (broken wikilinks), `stale_journal_pages`. Optional `category` filter.
+- `wiki_stats` — wiki health overview (page count, category breakdown, freshness distribution, index status). No args.
