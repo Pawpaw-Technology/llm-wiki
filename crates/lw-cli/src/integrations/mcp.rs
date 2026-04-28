@@ -170,7 +170,6 @@ pub fn remove_entry(config: &mut Value, key_path: &str) -> bool {
 
 /// Result of an ownership-checked removal attempt.
 #[derive(Debug, PartialEq)]
-#[allow(dead_code)]
 pub enum RemoveOutcome {
     /// Entry was present, matched the managed shape, and has been removed.
     Removed,
@@ -190,7 +189,6 @@ pub enum RemoveOutcome {
 /// * `Removed` — entry matched; caller should persist `config`.
 /// * `PreservedUserEdited` — entry exists but was user-modified; caller should warn.
 /// * `NotPresent` — key_path resolved to nothing; caller should report no-op.
-#[allow(dead_code)]
 pub fn remove_if_managed(config: &mut Value, key_path: &str, canonical: &Value) -> RemoveOutcome {
     let parts: Vec<&str> = key_path.split('.').collect();
     let (last, parents) = parts.split_last().unwrap();
