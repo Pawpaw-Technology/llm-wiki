@@ -20,21 +20,21 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            runner: [self-hosted, builder-ubuntu]
             asset: lw-x86_64-linux.tar.gz
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            runner: [self-hosted, builder-ubuntu]
             asset: lw-aarch64-linux.tar.gz
           - target: x86_64-apple-darwin
-            os: macos-latest
+            runner: [self-hosted, macOS]
             asset: lw-x86_64-darwin.tar.gz
           - target: aarch64-apple-darwin
-            os: macos-latest
+            runner: [self-hosted, macOS]
             asset: lw-aarch64-darwin.tar.gz
     steps:
       - uses: actions/checkout@v6
@@ -88,7 +88,7 @@ jobs:
 
   publish-installer:
     name: Publish install.sh as separate asset
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -108,7 +108,7 @@ jobs:
   release:
     name: Create Release
     needs: [build, publish-installer]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v6
         with:
